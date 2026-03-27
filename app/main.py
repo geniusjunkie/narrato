@@ -25,7 +25,6 @@ from app.frontend import FRONTEND_HTML
 # Video processing imports
 import cv2
 from PIL import Image
-from moviepy.editor import VideoFileClip, AudioFileClip, concatenate_audioclips
 from gtts import gTTS
 import requests
 from groq import Groq
@@ -238,41 +237,78 @@ async def generate_voiceover(text: str, voice: str, output_path: str):
 
 
 def merge_video_audio(video_path: str, audio_path: str, output_path: str):
-    """Combine video and audio into final output"""
+    """Combine video and audio using ffmpeg (memory-efficient, streams instead of loading into RAM)"""
+    import subprocess
     import traceback
     
     try:
-        video_clip = VideoFileClip(video_path)
-        audio_clip = AudioFileClip(audio_path)
+        # Get video duration using ffprobe
+        probe_cmd = [
+            'ffprobe', '-v', 'error',
+            '-show_entries', 'format=duration',
+            '-of', 'default=noprint_wrappers=1:nokey=1',
+            video_path
+        ]
+        result = subprocess.run(probe_cmd, capture_output=True, text=True, check=True)
+        video_duration = float(result.stdout.strip())
         
-        video_duration = video_clip.duration
-        audio_duration = audio_clip.duration
+        # Get audio duration
+        probe_cmd = [
+            'ffprobe', '-v', 'error',
+            '-show_entries', 'format=duration',
+            '-of', 'default=noprint_wrappers=1:nokey=1',
+            audio_path
+        ]
+        result = subprocess.run(probe_cmd, capture_output=True, text=True, check=True)
+        audio_duration = float(result.stdout.strip())
         
-        # Handle duration mismatch
-        if audio_duration > video_duration:
-            audio_clip = audio_clip.subclip(0, video_duration)
-        elif video_duration > audio_duration:
-            loops = int(video_duration / audio_duration) + 1
-            audio_clip = concatenate_audioclips([audio_clip] * loops).subclip(0, video_duration)
+        print(f"[INFO] Video duration: {video_duration}s, Audio duration: {audio_duration}s")
         
-        # Merge
-        final_clip = video_clip.set_audio(audio_clip)
+        # Build ffmpeg command
+        if audio_duration >= video_duration:
+            # Audio is longer, just trim it
+            cmd = [
+                'ffmpeg', '-y',
+                '-i', video_path,
+                '-i', audio_path,
+                '-c:v', 'copy',  # Copy video stream (no re-encoding)
+                '-c:a', 'aac',
+                '-t', str(video_duration),  # Trim to video duration
+                '-shortest',
+                '-movflags', '+faststart',  # Enable streaming
+                output_path
+            ]
+        else:
+            # Audio is shorter, loop it to match video duration
+            cmd = [
+                'ffmpeg', '-y',
+                '-i', video_path,
+                '-stream_loop', '-1',  # Loop audio infinitely
+                '-i', audio_path,
+                '-c:v', 'copy',  # Copy video stream (no re-encoding)
+                '-c:a', 'aac',
+                '-t', str(video_duration),  # Trim to video duration
+                '-shortest',
+                '-movflags', '+faststart',  # Enable streaming
+                output_path
+            ]
         
-        # Export
-        final_clip.write_videofile(
-            output_path,
-            codec='libx264',
-            audio_codec='aac',
-            fps=30,
-            verbose=False,
-            logger=None
+        print(f"[INFO] Running ffmpeg merge...")
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            check=True
         )
         
-        video_clip.close()
-        audio_clip.close()
-        final_clip.close()
-        
+        print(f"[INFO] ffmpeg merge completed successfully")
         return output_path
+        
+    except subprocess.CalledProcessError as e:
+        print(f"[ERROR] ffmpeg failed: {e}")
+        print(f"[ERROR] stdout: {e.stdout}")
+        print(f"[ERROR] stderr: {e.stderr}")
+        raise Exception(f"Video merge failed: {e.stderr}")
     except Exception as e:
         print(f"[ERROR] merge_video_audio failed: {e}")
         print(traceback.format_exc())
