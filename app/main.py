@@ -204,6 +204,8 @@ Format as clean paragraphs."""
 
 async def generate_voiceover(text: str, voice: str, output_path: str):
     """Generate voice using Google TTS (FREE - works on all servers)"""
+    import traceback
+    
     # Map voice to language code (gTTS uses simple lang codes)
     lang_map = {
         "en-US-AriaNeural": "en",
@@ -217,8 +219,19 @@ async def generate_voiceover(text: str, voice: str, output_path: str):
     
     # Run gTTS in thread pool since it's blocking
     def _generate():
-        tts = gTTS(text=text, lang=lang, slow=False)
-        tts.save(output_path)
+        try:
+            tts = gTTS(text=text, lang=lang, slow=False)
+            tts.save(output_path)
+            # Verify file was created
+            if not os.path.exists(output_path):
+                raise Exception("gTTS failed to create audio file")
+            if os.path.getsize(output_path) == 0:
+                raise Exception("gTTS created empty audio file")
+            print(f"[INFO] Voiceover saved to {output_path} ({os.path.getsize(output_path)} bytes)")
+        except Exception as e:
+            print(f"[ERROR] gTTS failed: {e}")
+            print(traceback.format_exc())
+            raise
     
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(None, _generate)
@@ -226,37 +239,44 @@ async def generate_voiceover(text: str, voice: str, output_path: str):
 
 def merge_video_audio(video_path: str, audio_path: str, output_path: str):
     """Combine video and audio into final output"""
-    video_clip = VideoFileClip(video_path)
-    audio_clip = AudioFileClip(audio_path)
+    import traceback
     
-    video_duration = video_clip.duration
-    audio_duration = audio_clip.duration
-    
-    # Handle duration mismatch
-    if audio_duration > video_duration:
-        audio_clip = audio_clip.subclip(0, video_duration)
-    elif video_duration > audio_duration:
-        loops = int(video_duration / audio_duration) + 1
-        audio_clip = concatenate_audioclips([audio_clip] * loops).subclip(0, video_duration)
-    
-    # Merge
-    final_clip = video_clip.set_audio(audio_clip)
-    
-    # Export
-    final_clip.write_videofile(
-        output_path,
-        codec='libx264',
-        audio_codec='aac',
-        fps=30,
-        verbose=False,
-        logger=None
-    )
-    
-    video_clip.close()
-    audio_clip.close()
-    final_clip.close()
-    
-    return output_path
+    try:
+        video_clip = VideoFileClip(video_path)
+        audio_clip = AudioFileClip(audio_path)
+        
+        video_duration = video_clip.duration
+        audio_duration = audio_clip.duration
+        
+        # Handle duration mismatch
+        if audio_duration > video_duration:
+            audio_clip = audio_clip.subclip(0, video_duration)
+        elif video_duration > audio_duration:
+            loops = int(video_duration / audio_duration) + 1
+            audio_clip = concatenate_audioclips([audio_clip] * loops).subclip(0, video_duration)
+        
+        # Merge
+        final_clip = video_clip.set_audio(audio_clip)
+        
+        # Export
+        final_clip.write_videofile(
+            output_path,
+            codec='libx264',
+            audio_codec='aac',
+            fps=30,
+            verbose=False,
+            logger=None
+        )
+        
+        video_clip.close()
+        audio_clip.close()
+        final_clip.close()
+        
+        return output_path
+    except Exception as e:
+        print(f"[ERROR] merge_video_audio failed: {e}")
+        print(traceback.format_exc())
+        raise
 
 
 async def process_video_job(job_id: str, video_path: str, voice: str, num_frames: int):
@@ -304,6 +324,18 @@ async def process_video_job(job_id: str, video_path: str, voice: str, num_frames
         audio_path = str(TEMP_DIR / f"{job_id}_voiceover.mp3")
         await generate_voiceover(script, voice, audio_path)
         
+        # Verify audio file was created
+        def _verify_audio():
+            if not os.path.exists(audio_path):
+                raise Exception(f"Audio file not found: {audio_path}")
+            size = os.path.getsize(audio_path)
+            if size == 0:
+                raise Exception("Audio file is empty")
+            return size
+        
+        audio_size = await loop.run_in_executor(None, _verify_audio)
+        print(f"[INFO] Audio file verified: {audio_size} bytes")
+        
         # Step 5: Merge video and audio (CPU-intensive, run in thread)
         update_job(job_id, Status.MERGING, 85, "Merging video and audio...")
         output_path = str(OUTPUT_DIR / f"{job_id}_final.mp4")
@@ -311,17 +343,39 @@ async def process_video_job(job_id: str, video_path: str, voice: str, num_frames
             None, merge_video_audio, video_path, audio_path, output_path
         )
         
+        # Verify output file was created
+        def _verify_output():
+            if not os.path.exists(output_path):
+                raise Exception(f"Output video not found: {output_path}")
+            size = os.path.getsize(output_path)
+            if size == 0:
+                raise Exception("Output video is empty")
+            return size
+        
+        output_size = await loop.run_in_executor(None, _verify_output)
+        print(f"[INFO] Output video verified: {output_size} bytes")
+        
         # Cleanup temp files (run in thread)
         def _cleanup():
-            if os.path.exists(audio_path):
-                os.remove(audio_path)
+            try:
+                if os.path.exists(audio_path):
+                    os.remove(audio_path)
+                    print(f"[INFO] Cleaned up temp audio: {audio_path}")
+            except Exception as e:
+                print(f"[WARN] Failed to cleanup audio file: {e}")
         await loop.run_in_executor(None, _cleanup)
         
         # Mark complete
         update_job(job_id, Status.COMPLETED, 100, "Video processing complete!")
         
     except Exception as e:
-        update_job(job_id, Status.FAILED, 0, f"Error: {str(e)}", error=str(e))
+        import traceback
+        error_msg = str(e)
+        print(f"[ERROR] Job {job_id} failed: {error_msg}")
+        print(traceback.format_exc())
+        # Preserve the last progress instead of resetting to 0
+        current_progress = jobs.get(job_id, {}).get("progress", 0)
+        update_job(job_id, Status.FAILED, current_progress, f"Failed at {current_progress}%: {error_msg}", error=error_msg)
 
 
 # API Endpoints
