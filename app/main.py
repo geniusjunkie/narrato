@@ -139,8 +139,8 @@ def extract_key_frames(video_path: str, num_frames: int = 5):
     return frames, duration
 
 
-def analyze_frame_with_gemini(image: Image.Image, api_key: str) -> str:
-    """Send frame to Gemini AI for analysis"""
+def analyze_frame_with_gemini(image: Image.Image, api_key: str, frame_num: int = 0) -> str:
+    """Send frame to Gemini AI for analysis with improved prompting"""
     buffered = io.BytesIO()
     image.save(buffered, format="JPEG")
     img_str = base64.b64encode(buffered.getvalue()).decode()
@@ -148,10 +148,24 @@ def analyze_frame_with_gemini(image: Image.Image, api_key: str) -> str:
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
     
     headers = {'Content-Type': 'application/json'}
+    
+    # Better prompt that forces focus on actual screen content
+    prompt = f"""This is frame {frame_num} from a screen recording tutorial video. 
+
+Describe EXACTLY what is visible on the screen in this single frame. Focus on:
+- What application or website is shown
+- What text, menus, or UI elements are visible
+- What the user is doing or demonstrating
+- Any settings, options, or controls shown
+
+Be specific and literal. If you see Canva, say Canva. If you see print settings, say print settings. If you see blurry images or quality settings, mention those.
+
+Respond with ONE sentence describing what is literally visible on screen."""
+    
     data = {
         "contents": [{
             "parts": [{
-                "text": "Describe what is happening in this screen recording frame in one sentence. Be specific about any UI elements, buttons, or actions being shown."
+                "text": prompt
             }, {
                 "inline_data": {
                     "mime_type": "image/jpeg",
@@ -166,39 +180,57 @@ def analyze_frame_with_gemini(image: Image.Image, api_key: str) -> str:
         result = response.json()
         
         if 'candidates' in result and len(result['candidates']) > 0:
-            return result['candidates'][0]['content']['parts'][0]['text']
+            description = result['candidates'][0]['content']['parts'][0]['text']
+            print(f"[INFO] Frame {frame_num} analysis: {description[:100]}...")
+            return description
         else:
-            return "Frame shows part of the tutorial"
+            print(f"[WARN] Frame {frame_num}: No candidates in Gemini response")
+            return f"Frame {frame_num} shows tutorial content"
     except Exception as e:
-        return f"Frame shows tutorial content"
+        print(f"[ERROR] Frame {frame_num} analysis failed: {e}")
+        return f"Frame {frame_num} shows tutorial content"
 
 
 def generate_script(descriptions: list, duration: float, api_key: str) -> str:
-    """Generate narration script from frame descriptions"""
+    """Generate narration script from frame descriptions with strict content adherence"""
     client = Groq(api_key=api_key)
     
     context = "\n".join([f"Frame {i+1}: {desc}" for i, desc in enumerate(descriptions)])
     target_words = int(duration * 150 / 60)  # ~150 words per minute
     
-    prompt = f"""You are a professional tutorial narrator. Write a clear, engaging voiceover script for a tutorial video.
+    prompt = f"""You are a professional tutorial narrator. Your task is to write a voiceover script based ONLY on the frame descriptions provided.
 
-Video frames description:
+STRICT RULES:
+1. ONLY mention topics, applications, and actions that appear in the frame descriptions below
+2. If the frames mention Canva and print quality, talk about Canva and print quality
+3. If the frames show settings menus, describe navigating those settings
+4. NEVER invent content not shown in the frames
+5. NEVER assume the video is about smartphones unless frames explicitly show phones
+6. Use simple, clear, instructional language
+7. Do NOT mention "frames" or "the video shows" - narrate as if guiding someone through the process
+
+Video frame descriptions (YOUR ONLY SOURCE OF INFORMATION):
 {context}
 
 Target length: approximately {target_words} words (for a {duration:.0f} second video)
 
-Write a natural-sounding narration that explains what's happening step by step. Use simple, clear language. Don't mention "frames" or "the video shows" - just narrate as if you're guiding someone through the process in real-time.
+Write a natural-sounding narration that explains what is literally shown in these frames. Stick to the facts in the descriptions above.
 
 Format as clean paragraphs."""
 
+    print(f"[INFO] Generating script from {len(descriptions)} frame descriptions...")
+    
     response = client.chat.completions.create(
         model="llama-3.1-8b-instant",
         messages=[{"role": "user", "content": prompt}],
-        temperature=0.7,
+        temperature=0.5,  # Lower temperature for more focused output
         max_tokens=1500
     )
     
-    return response.choices[0].message.content
+    script = response.choices[0].message.content
+    print(f"[INFO] Generated script ({len(script.split())} words): {script[:200]}...")
+    
+    return script
 
 
 async def generate_voiceover(text: str, voice: str, output_path: str):
@@ -335,7 +367,7 @@ async def process_video_job(job_id: str, video_path: str, voice: str, num_frames
         frame_descriptions = []
         for i, frame in enumerate(frames):
             desc = await loop.run_in_executor(
-                None, analyze_frame_with_gemini, frame, GOOGLE_API_KEY
+                None, analyze_frame_with_gemini, frame, GOOGLE_API_KEY, i + 1
             )
             frame_descriptions.append(desc)
             # Progress increases from 10% to 35% based on frame analysis
