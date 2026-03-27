@@ -58,6 +58,45 @@ FRONTEND_HTML = '''<!DOCTYPE html>
             -webkit-text-fill-color: transparent;
             background-clip: text;
         }
+        .nav-auth {
+            display: flex;
+            gap: 1rem;
+            align-items: center;
+        }
+        .user-info {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            color: var(--text-secondary);
+            font-size: 0.875rem;
+        }
+        .user-avatar {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            background: var(--accent-gradient);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 600;
+            font-size: 0.75rem;
+            color: white;
+        }
+        .btn-nav {
+            background: transparent;
+            color: var(--text-secondary);
+            border: 1px solid var(--border);
+            padding: 0.5rem 1rem;
+            border-radius: 0.5rem;
+            font-weight: 500;
+            font-size: 0.875rem;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .btn-nav:hover {
+            border-color: var(--accent-primary);
+            color: var(--text-primary);
+        }
         .hero {
             text-align: center;
             padding: 5rem 2rem 3rem;
@@ -111,6 +150,82 @@ FRONTEND_HTML = '''<!DOCTYPE html>
             margin: 0 auto 4rem;
             padding: 0 2rem;
         }
+        .auth-section {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 1rem;
+            padding: 2.5rem;
+            margin: 2rem auto;
+            max-width: 400px;
+            display: none;
+        }
+        .auth-section.active { display: block; }
+        .auth-tabs {
+            display: flex;
+            gap: 0.5rem;
+            margin-bottom: 1.5rem;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 1rem;
+        }
+        .auth-tab {
+            flex: 1;
+            background: transparent;
+            border: none;
+            color: var(--text-muted);
+            font-size: 0.9375rem;
+            font-weight: 500;
+            padding: 0.5rem;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .auth-tab.active {
+            color: var(--text-primary);
+            border-bottom: 2px solid var(--accent-primary);
+        }
+        .auth-form {
+            display: none;
+        }
+        .auth-form.active { display: block; }
+        .form-group {
+            margin-bottom: 1rem;
+        }
+        .form-group label {
+            display: block;
+            font-size: 0.875rem;
+            font-weight: 500;
+            margin-bottom: 0.5rem;
+            color: var(--text-secondary);
+        }
+        .form-group input {
+            width: 100%;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+            padding: 0.75rem 1rem;
+            border-radius: 0.5rem;
+            font-size: 0.9375rem;
+        }
+        .form-group input:focus {
+            outline: none;
+            border-color: var(--accent-primary);
+        }
+        .btn-primary {
+            width: 100%;
+            background: var(--accent-gradient);
+            color: white;
+            border: none;
+            padding: 0.875rem;
+            border-radius: 0.5rem;
+            font-weight: 600;
+            font-size: 0.9375rem;
+            cursor: pointer;
+            transition: opacity 0.2s;
+        }
+        .btn-primary:hover { opacity: 0.9; }
+        .btn-primary:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
         .upload-zone {
             background: var(--bg-secondary);
             border: 2px dashed var(--border);
@@ -151,15 +266,7 @@ FRONTEND_HTML = '''<!DOCTYPE html>
             color: var(--text-muted);
             margin-bottom: 1rem;
         }
-        .form-group { margin-bottom: 1rem; }
-        .form-group label {
-            display: block;
-            font-size: 0.875rem;
-            font-weight: 500;
-            margin-bottom: 0.5rem;
-            color: var(--text-secondary);
-        }
-        .form-group select {
+        .settings-panel select {
             width: 100%;
             background: var(--bg-tertiary);
             border: 1px solid var(--border);
@@ -168,10 +275,6 @@ FRONTEND_HTML = '''<!DOCTYPE html>
             border-radius: 0.5rem;
             font-size: 0.875rem;
             cursor: pointer;
-        }
-        .form-group select:focus {
-            outline: none;
-            border-color: var(--accent-primary);
         }
         .progress-section {
             background: var(--bg-secondary);
@@ -210,22 +313,6 @@ FRONTEND_HTML = '''<!DOCTYPE html>
             transition: width 0.5s ease;
             width: 0%;
         }
-        .progress-steps {
-            display: flex;
-            justify-content: space-between;
-            font-size: 0.75rem;
-            color: var(--text-muted);
-        }
-        .result-section {
-            background: var(--bg-secondary);
-            border: 1px solid var(--border);
-            border-radius: 1rem;
-            padding: 2rem;
-            margin-top: 1.5rem;
-            text-align: center;
-            display: none;
-        }
-        .result-section.active { display: block; }
         .script-section {
             background: var(--bg-secondary);
             border: 1px solid var(--border);
@@ -253,36 +340,31 @@ FRONTEND_HTML = '''<!DOCTYPE html>
             outline: none;
             border-color: var(--accent-primary);
         }
-        .script-editor-label {
-            font-size: 0.875rem;
-            font-weight: 500;
-            color: var(--text-secondary);
-            margin-bottom: 0.5rem;
-            display: block;
+        .result-section {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 1rem;
+            padding: 2rem;
+            margin-top: 1.5rem;
+            text-align: center;
+            display: none;
         }
-        .script-hint {
-            font-size: 0.75rem;
-            color: var(--text-muted);
-            margin-bottom: 1rem;
-        }
-        .btn-primary {
-            background: var(--accent-gradient);
-            color: white;
-            border: none;
-            padding: 0.75rem 1.5rem;
-            border-radius: 0.5rem;
-            font-weight: 600;
-            font-size: 0.875rem;
-            cursor: pointer;
-        }
-        .btn-primary:hover {
-            opacity: 0.9;
-        }
+        .result-section.active { display: block; }
         .btn-group {
             display: flex;
             gap: 1rem;
             justify-content: center;
             flex-wrap: wrap;
+        }
+        .btn-secondary {
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+            border: 1px solid var(--border);
+            padding: 0.75rem 1.5rem;
+            border-radius: 0.5rem;
+            font-weight: 600;
+            font-size: 0.875rem;
+            cursor: pointer;
         }
         .btn-success {
             background: var(--success);
@@ -298,57 +380,43 @@ FRONTEND_HTML = '''<!DOCTYPE html>
             align-items: center;
             gap: 0.5rem;
         }
-        .btn-secondary {
-            background: var(--bg-tertiary);
-            color: var(--text-primary);
-            border: 1px solid var(--border);
-            padding: 0.75rem 1.5rem;
-            border-radius: 0.5rem;
-            font-weight: 600;
-            font-size: 0.875rem;
-            cursor: pointer;
-        }
         .error-message {
             background: rgba(239, 68, 68, 0.1);
             border: 1px solid var(--error);
             border-radius: 0.75rem;
             padding: 1rem;
-            margin-top: 1rem;
+            margin-bottom: 1rem;
             color: var(--error);
+            font-size: 0.875rem;
             display: none;
         }
         .error-message.active { display: block; }
-        .features {
-            padding: 4rem 2rem;
-            max-width: 1200px;
-            margin: 0 auto;
+        .success-message {
+            background: rgba(34, 197, 94, 0.1);
+            border: 1px solid var(--success);
+            border-radius: 0.75rem;
+            padding: 1rem;
+            margin-bottom: 1rem;
+            color: var(--success);
+            font-size: 0.875rem;
+            display: none;
         }
-        .features h2 {
-            font-family: 'Space Grotesk', sans-serif;
-            font-size: 2rem;
+        .success-message.active { display: block; }
+        .login-prompt {
             text-align: center;
-            margin-bottom: 3rem;
-        }
-        .features-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-            gap: 1.5rem;
-        }
-        .feature-card {
+            padding: 3rem 2rem;
             background: var(--bg-secondary);
             border: 1px solid var(--border);
             border-radius: 1rem;
-            padding: 1.5rem;
+            margin: 2rem 0;
         }
-        .feature-icon {
-            width: 48px; height: 48px;
-            background: var(--bg-tertiary);
-            border-radius: 0.75rem;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 1.5rem;
-            margin-bottom: 1rem;
+        .login-prompt h3 {
+            margin-bottom: 0.5rem;
+            font-family: 'Space Grotesk', sans-serif;
+        }
+        .login-prompt p {
+            color: var(--text-secondary);
+            margin-bottom: 1.5rem;
         }
         footer {
             border-top: 1px solid var(--border);
@@ -363,23 +431,77 @@ FRONTEND_HTML = '''<!DOCTYPE html>
     <div class="bg-gradient"></div>
     <nav>
         <div class="logo">Narrato</div>
+        <div class="nav-auth" id="navAuth">
+            <!-- Auth buttons injected by JS -->
+        </div>
     </nav>
+    
     <section class="hero">
         <div class="badge">Free • No Credit Card Required</div>
         <h1>Turn Silent Videos Into <span>Professional Narrations</span></h1>
         <p>Upload your screen recording. Our AI analyzes the video, writes a script, and generates a natural voiceover.</p>
     </section>
+    
     <main class="app-container">
-        <div class="upload-zone" id="uploadZone">
-            <input type="file" id="fileInput" accept="video/mp4,video/quicktime,video/x-msvideo,video/webm">
-            <div class="upload-icon">📹</div>
-            <h3>Drop your video here</h3>
-            <p>or click to browse • MP4, MOV, AVI up to 100MB</p>
+        <!-- Auth Section (Login/Register) -->
+        <div class="auth-section" id="authSection">
+            <div class="auth-tabs">
+                <button class="auth-tab active" data-tab="login">Sign In</button>
+                <button class="auth-tab" data-tab="register">Create Account</button>
+            </div>
+            
+            <div class="error-message" id="authError"></div>
+            <div class="success-message" id="authSuccess"></div>
+            
+            <!-- Login Form -->
+            <form class="auth-form active" id="loginForm">
+                <div class="form-group">
+                    <label for="loginEmail">Email</label>
+                    <input type="email" id="loginEmail" placeholder="you@example.com" required>
+                </div>
+                <div class="form-group">
+                    <label for="loginPassword">Password</label>
+                    <input type="password" id="loginPassword" placeholder="••••••••" required minlength="8">
+                </div>
+                <button type="submit" class="btn-primary">Sign In</button>
+            </form>
+            
+            <!-- Register Form -->
+            <form class="auth-form" id="registerForm">
+                <div class="form-group">
+                    <label for="registerName">Name (optional)</label>
+                    <input type="text" id="registerName" placeholder="Your name">
+                </div>
+                <div class="form-group">
+                    <label for="registerEmail">Email</label>
+                    <input type="email" id="registerEmail" placeholder="you@example.com" required>
+                </div>
+                <div class="form-group">
+                    <label for="registerPassword">Password</label>
+                    <input type="password" id="registerPassword" placeholder="Min 8 characters" required minlength="8">
+                </div>
+                <button type="submit" class="btn-primary">Create Account</button>
+            </form>
         </div>
-        <div class="settings-panel">
-            <h4>Voice Settings</h4>
-            <div class="form-group">
-                <label for="voiceSelect">Select Voice Region</label>
+        
+        <!-- Login Prompt (shown when not authenticated) -->
+        <div class="login-prompt" id="loginPrompt">
+            <h3>Get Started</h3>
+            <p>Sign in or create a free account to start creating AI voiceovers.</p>
+            <button class="btn-primary" id="showAuthBtn" style="width: auto; padding: 0.75rem 2rem;">Sign In / Register</button>
+        </div>
+        
+        <!-- Main App (shown when authenticated) -->
+        <div id="mainApp" style="display: none;">
+            <div class="upload-zone" id="uploadZone">
+                <input type="file" id="fileInput" accept="video/mp4,video/quicktime,video/x-msvideo,video/webm">
+                <div class="upload-icon">📹</div>
+                <h3>Drop your video here</h3>
+                <p>or click to browse • MP4, MOV, AVI up to 100MB</p>
+            </div>
+            
+            <div class="settings-panel">
+                <h4>Voice Settings</h4>
                 <select id="voiceSelect">
                     <option value="en-US-AriaNeural">English (US) — Default</option>
                     <option value="en-GB-SoniaNeural">English (UK)</option>
@@ -387,70 +509,66 @@ FRONTEND_HTML = '''<!DOCTYPE html>
                     <option value="en-IN-NeerjaNeural">English (Indian)</option>
                 </select>
             </div>
-        </div>
-        <div class="error-message" id="errorMessage"></div>
-        <div class="progress-section" id="progressSection">
-            <div class="progress-header">
-                <div style="display:flex;align-items:center;gap:0.75rem">
-                    <div class="spinner"></div>
-                    <span id="statusText">Processing your video...</span>
+            
+            <div class="error-message" id="errorMessage"></div>
+            
+            <div class="progress-section" id="progressSection">
+                <div class="progress-header">
+                    <div style="display:flex;align-items:center;gap:0.75rem">
+                        <div class="spinner"></div>
+                        <span id="statusText">Processing your video...</span>
+                    </div>
+                    <span id="progressPercent">0%</span>
                 </div>
-                <span id="progressPercent">0%</span>
+                <div class="progress-bar-container">
+                    <div class="progress-bar" id="progressBar"></div>
+                </div>
             </div>
-            <div class="progress-bar-container">
-                <div class="progress-bar" id="progressBar"></div>
+            
+            <div class="script-section" id="scriptSection">
+                <h3>Review Your Script</h3>
+                <p style="color: var(--text-secondary); margin-bottom: 1rem;">AI generated this narration based on your video. Edit it below, then click Generate Voiceover.</p>
+                <textarea class="script-editor" id="scriptEditor" placeholder="Your script will appear here..."></textarea>
+                <div class="btn-group">
+                    <button class="btn-primary" id="generateVoiceoverBtn">Generate Voiceover</button>
+                    <button class="btn-secondary" id="cancelBtn">Cancel</button>
+                </div>
             </div>
-        </div>
-        <div class="script-section" id="scriptSection">
-            <h3>Review Your Script</h3>
-            <p style="color: var(--text-secondary); margin-bottom: 1rem;">AI generated this narration based on your video. Edit it below, then click Generate Voiceover.</p>
-            <label class="script-editor-label" for="scriptEditor">Narration Script</label>
-            <textarea class="script-editor" id="scriptEditor" placeholder="Your script will appear here..."></textarea>
-            <p class="script-hint">💡 Tip: Keep it natural and conversational. The script should match what's shown in your video.</p>
-            <div class="btn-group">
-                <button class="btn-primary" id="generateVoiceoverBtn">Generate Voiceover</button>
-                <button class="btn-secondary" id="cancelBtn">Cancel</button>
-            </div>
-        </div>
-        <div class="result-section" id="resultSection">
-            <h3>Your video is ready!</h3>
-            <p>AI voiceover added successfully</p>
-            <div class="btn-group">
-                <a href="#" class="btn-success" id="downloadBtn" download>Download Video</a>
-                <button class="btn-secondary" id="createAnotherBtn">Create Another</button>
+            
+            <div class="result-section" id="resultSection">
+                <h3>Your video is ready!</h3>
+                <p>AI voiceover added successfully</p>
+                <div class="btn-group">
+                    <a href="#" class="btn-success" id="downloadBtn" download>Download Video</a>
+                    <button class="btn-secondary" id="createAnotherBtn">Create Another</button>
+                </div>
             </div>
         </div>
     </main>
-    <section class="features">
-        <h2>How It Works</h2>
-        <div class="features-grid">
-            <div class="feature-card">
-                <div class="feature-icon">📤</div>
-                <h3>1. Upload</h3>
-                <p>Upload any silent screen recording. No audio required.</p>
-            </div>
-            <div class="feature-card">
-                <div class="feature-icon">🤖</div>
-                <h3>2. AI Analysis</h3>
-                <p>Our AI extracts key frames and understands your video.</p>
-            </div>
-            <div class="feature-card">
-                <div class="feature-icon">✍️</div>
-                <h3>3. Script Generation</h3>
-                <p>AI writes a professional narration script.</p>
-            </div>
-            <div class="feature-card">
-                <div class="feature-icon">🎙️</div>
-                <h3>4. Voice Synthesis</h3>
-                <p>Choose from professional AI voices. Free and unlimited.</p>
-            </div>
-        </div>
-    </section>
+    
     <footer>
         <p>Built by Genius Junkie • Powered by Groq AI, Google Gemini, and Google TTS</p>
     </footer>
+    
     <script>
         const API_URL = '';
+        
+        // Auth state
+        let authToken = localStorage.getItem('narrato_token');
+        let currentUser = null;
+        
+        // DOM Elements
+        const navAuth = document.getElementById('navAuth');
+        const authSection = document.getElementById('authSection');
+        const loginPrompt = document.getElementById('loginPrompt');
+        const mainApp = document.getElementById('mainApp');
+        const authTabs = document.querySelectorAll('.auth-tab');
+        const loginForm = document.getElementById('loginForm');
+        const registerForm = document.getElementById('registerForm');
+        const authError = document.getElementById('authError');
+        const authSuccess = document.getElementById('authSuccess');
+        
+        // App elements
         const uploadZone = document.getElementById('uploadZone');
         const fileInput = document.getElementById('fileInput');
         const voiceSelect = document.getElementById('voiceSelect');
@@ -466,8 +584,210 @@ FRONTEND_HTML = '''<!DOCTYPE html>
         const cancelBtn = document.getElementById('cancelBtn');
         const downloadBtn = document.getElementById('downloadBtn');
         const createAnotherBtn = document.getElementById('createAnotherBtn');
+        
         let currentJobId = null, pollInterval = null;
         
+        // Initialize
+        async function init() {
+            if (authToken) {
+                await loadUser();
+            }
+            updateUI();
+        }
+        
+        // Load user from token
+        async function loadUser() {
+            try {
+                const response = await fetch(`${API_URL}/auth/me`, {
+                    headers: { 'Authorization': `Bearer ${authToken}` }
+                });
+                if (response.ok) {
+                    currentUser = await response.json();
+                } else {
+                    // Token invalid
+                    logout();
+                }
+            } catch (e) {
+                console.error('Failed to load user:', e);
+            }
+        }
+        
+        // Update UI based on auth state
+        function updateUI() {
+            if (currentUser) {
+                // Logged in
+                navAuth.innerHTML = `
+                    <div class="user-info">
+                        <div class="user-avatar">${currentUser.name?.[0]?.toUpperCase() || currentUser.email[0].toUpperCase()}</div>
+                        <span>${currentUser.name || currentUser.email}</span>
+                    </div>
+                    <button class="btn-nav" id="logoutBtn">Logout</button>
+                `;
+                document.getElementById('logoutBtn').addEventListener('click', logout);
+                
+                loginPrompt.style.display = 'none';
+                authSection.classList.remove('active');
+                mainApp.style.display = 'block';
+            } else {
+                // Not logged in
+                navAuth.innerHTML = `
+                    <button class="btn-nav" id="navLoginBtn">Sign In</button>
+                    <button class="btn-primary" id="navRegisterBtn" style="width: auto; padding: 0.5rem 1rem;">Get Started</button>
+                `;
+                document.getElementById('navLoginBtn').addEventListener('click', () => showAuth('login'));
+                document.getElementById('navRegisterBtn').addEventListener('click', () => showAuth('register'));
+                
+                loginPrompt.style.display = 'block';
+                authSection.classList.remove('active');
+                mainApp.style.display = 'none';
+            }
+        }
+        
+        // Show auth section
+        function showAuth(tab) {
+            loginPrompt.style.display = 'none';
+            authSection.classList.add('active');
+            switchAuthTab(tab);
+        }
+        
+        // Switch auth tabs
+        function switchAuthTab(tab) {
+            authTabs.forEach(t => {
+                t.classList.toggle('active', t.dataset.tab === tab);
+            });
+            if (tab === 'login') {
+                loginForm.classList.add('active');
+                registerForm.classList.remove('active');
+            } else {
+                loginForm.classList.remove('active');
+                registerForm.classList.add('active');
+            }
+            hideAuthMessages();
+        }
+        
+        // Auth tab click handlers
+        authTabs.forEach(tab => {
+            tab.addEventListener('click', () => switchAuthTab(tab.dataset.tab));
+        });
+        
+        // Show auth prompt button
+        document.getElementById('showAuthBtn').addEventListener('click', () => showAuth('login'));
+        
+        // Hide auth messages
+        function hideAuthMessages() {
+            authError.classList.remove('active');
+            authSuccess.classList.remove('active');
+        }
+        
+        // Show auth error
+        function showAuthError(msg) {
+            authError.textContent = msg;
+            authError.classList.add('active');
+            authSuccess.classList.remove('active');
+        }
+        
+        // Show auth success
+        function showAuthSuccess(msg) {
+            authSuccess.textContent = msg;
+            authSuccess.classList.add('active');
+            authError.classList.remove('active');
+        }
+        
+        // Login handler
+        loginForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            hideAuthMessages();
+            
+            const email = document.getElementById('loginEmail').value;
+            const password = document.getElementById('loginPassword').value;
+            
+            try {
+                const response = await fetch(`${API_URL}/auth/login`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, password })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    authToken = data.token;
+                    currentUser = data.user;
+                    localStorage.setItem('narrato_token', authToken);
+                    showAuthSuccess('Login successful!');
+                    setTimeout(() => {
+                        updateUI();
+                        resetApp();
+                    }, 500);
+                } else {
+                    showAuthError(data.message || 'Login failed');
+                }
+            } catch (e) {
+                showAuthError('Network error. Please try again.');
+            }
+        });
+        
+        // Register handler
+        registerForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            hideAuthMessages();
+            
+            const name = document.getElementById('registerName').value;
+            const email = document.getElementById('registerEmail').value;
+            const password = document.getElementById('registerPassword').value;
+            
+            try {
+                const response = await fetch(`${API_URL}/auth/register`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name, email, password })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    authToken = data.token;
+                    currentUser = data.user;
+                    localStorage.setItem('narrato_token', authToken);
+                    showAuthSuccess('Account created successfully!');
+                    setTimeout(() => {
+                        updateUI();
+                        resetApp();
+                    }, 500);
+                } else {
+                    showAuthError(data.message || 'Registration failed');
+                }
+            } catch (e) {
+                showAuthError('Network error. Please try again.');
+            }
+        });
+        
+        // Logout
+        function logout() {
+            authToken = null;
+            currentUser = null;
+            localStorage.removeItem('narrato_token');
+            updateUI();
+            resetApp();
+        }
+        
+        // Reset app state
+        function resetApp() {
+            clearInterval(pollInterval);
+            currentJobId = null;
+            fileInput.value = '';
+            scriptEditor.value = '';
+            progressSection.classList.remove('active');
+            scriptSection.classList.remove('active');
+            resultSection.classList.remove('active');
+            uploadZone.style.display = 'block';
+            document.querySelector('.settings-panel').style.display = 'block';
+            progressBar.style.width = '0%';
+            progressPercent.textContent = '0%';
+            hideError();
+        }
+        
+        // File upload handling
         uploadZone.addEventListener('click', () => fileInput.click());
         uploadZone.addEventListener('dragover', (e) => { e.preventDefault(); uploadZone.classList.add('dragover'); });
         uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('dragover'));
@@ -478,8 +798,8 @@ FRONTEND_HTML = '''<!DOCTYPE html>
         fileInput.addEventListener('change', (e) => { if (e.target.files.length > 0) handleFile(e.target.files[0]); });
         
         generateVoiceoverBtn.addEventListener('click', submitScript);
-        cancelBtn.addEventListener('click', () => { resetUI(); fileInput.value = ''; hideError(); });
-        createAnotherBtn.addEventListener('click', () => { resetUI(); fileInput.value = ''; hideError(); });
+        cancelBtn.addEventListener('click', resetApp);
+        createAnotherBtn.addEventListener('click', resetApp);
         
         function handleFile(file) {
             const allowedTypes = ['video/mp4', 'video/quicktime', 'video/x-msvideo', 'video/webm'];
@@ -498,17 +818,31 @@ FRONTEND_HTML = '''<!DOCTYPE html>
             document.querySelector('.settings-panel').style.display = 'none';
             scriptSection.classList.remove('active');
             try {
-                const response = await fetch(`${API_URL}/upload`, { method: 'POST', body: formData });
-                if (!response.ok) { const error = await response.json(); throw new Error(error.detail || 'Upload failed'); }
+                const response = await fetch(`${API_URL}/upload`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${authToken}` },
+                    body: formData
+                });
+                if (!response.ok) { 
+                    if (response.status === 401) {
+                        logout();
+                        showError('Session expired. Please sign in again.');
+                        return;
+                    }
+                    const error = await response.json(); 
+                    throw new Error(error.detail || 'Upload failed'); 
+                }
                 const data = await response.json();
                 currentJobId = data.job_id;
                 pollInterval = setInterval(() => checkStatus(currentJobId), 500);
-            } catch (error) { showError(error.message); resetUI(); }
+            } catch (error) { showError(error.message); resetApp(); }
         }
         
         async function checkStatus(jobId) {
             try {
-                const response = await fetch(`${API_URL}/status/${jobId}`);
+                const response = await fetch(`${API_URL}/status/${jobId}`, {
+                    headers: { 'Authorization': `Bearer ${authToken}` }
+                });
                 const data = await response.json();
                 updateProgress(data);
                 
@@ -523,7 +857,7 @@ FRONTEND_HTML = '''<!DOCTYPE html>
                 else if (data.status === 'failed') { 
                     clearInterval(pollInterval); 
                     showError(data.error || 'Processing failed'); 
-                    resetUI(); 
+                    resetApp(); 
                 }
             } catch (error) { console.error('Status check failed:', error); }
         }
@@ -557,11 +891,19 @@ FRONTEND_HTML = '''<!DOCTYPE html>
             try {
                 const response = await fetch(`${API_URL}/approve-script/${currentJobId}`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${authToken}`
+                    },
                     body: JSON.stringify({ script: script })
                 });
                 
                 if (!response.ok) { 
+                    if (response.status === 401) {
+                        logout();
+                        showError('Session expired. Please sign in again.');
+                        return;
+                    }
                     const error = await response.json(); 
                     throw new Error(error.detail || 'Failed to submit script'); 
                 }
@@ -581,24 +923,17 @@ FRONTEND_HTML = '''<!DOCTYPE html>
             progressSection.classList.remove('active');
             scriptSection.classList.remove('active');
             resultSection.classList.add('active');
-            downloadBtn.href = `${API_URL}/download/${jobId}`;
+            downloadBtn.href = `${API_URL}/download/${jobId}?token=${authToken}`;
         }
         
-        function resetUI() {
-            clearInterval(pollInterval);
-            progressSection.classList.remove('active');
-            scriptSection.classList.remove('active');
-            resultSection.classList.remove('active');
-            uploadZone.style.display = 'block';
-            document.querySelector('.settings-panel').style.display = 'block';
-            progressBar.style.width = '0%';
-            progressPercent.textContent = '0%';
-            scriptEditor.value = '';
-            currentJobId = null;
+        function showError(message) { 
+            errorMessage.textContent = message; 
+            errorMessage.classList.add('active'); 
         }
-        
-        function showError(message) { errorMessage.textContent = message; errorMessage.classList.add('active'); }
         function hideError() { errorMessage.classList.remove('active'); }
+        
+        // Start
+        init();
     </script>
 </body>
 </html>'''

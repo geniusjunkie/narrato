@@ -1,6 +1,6 @@
 """
 Narrato - FastAPI Backend
-AI-powered video voiceover generation
+AI-powered video voiceover generation with user authentication
 """
 
 import os
@@ -9,13 +9,17 @@ import asyncio
 import base64
 import io
 import json
+import sqlite3
+import hashlib
+import secrets
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
-from fastapi import FastAPI, File, UploadFile, HTTPException, BackgroundTasks, WebSocket
+from fastapi import FastAPI, File, UploadFile, HTTPException, BackgroundTasks, WebSocket, Depends, Request
 from fastapi.responses import FileResponse, JSONResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, Field
 import uvicorn
 
@@ -33,14 +37,122 @@ from groq import Groq
 UPLOAD_DIR = Path("uploads")
 OUTPUT_DIR = Path("outputs")
 TEMP_DIR = Path("temp")
+DB_PATH = Path("data/narrato.db")
 
 # Create directories
-for dir_path in [UPLOAD_DIR, OUTPUT_DIR, TEMP_DIR]:
-    dir_path.mkdir(exist_ok=True)
+for dir_path in [UPLOAD_DIR, OUTPUT_DIR, TEMP_DIR, DB_PATH.parent]:
+    dir_path.mkdir(exist_ok=True, parents=True)
 
 # API Keys from environment
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "")
+JWT_SECRET = os.getenv("JWT_SECRET", secrets.token_hex(32))
+
+# Security
+security = HTTPBearer(auto_error=False)
+
+def init_db():
+    """Initialize SQLite database with users table"""
+    conn = sqlite3.connect(str(DB_PATH))
+    cursor = conn.cursor()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            email TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            name TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            last_login TIMESTAMP
+        )
+    ''')
+    conn.commit()
+    conn.close()
+
+def hash_password(password: str) -> str:
+    """Hash password with salt"""
+    salt = secrets.token_hex(16)
+    pwdhash = hashlib.pbkdf2_hmac('sha256', password.encode(), salt.encode(), 100000)
+    return salt + pwdhash.hex()
+
+def verify_password(stored: str, provided: str) -> bool:
+    """Verify password against hash"""
+    salt = stored[:32]
+    pwdhash = hashlib.pbkdf2_hmac('sha256', provided.encode(), salt.encode(), 100000)
+    return stored[32:] == pwdhash.hex()
+
+def create_token(user_id: int, email: str) -> str:
+    """Create simple JWT-like token"""
+    header = base64.b64encode(json.dumps({"alg": "HS256", "typ": "JWT"}).encode()).decode().rstrip('=')
+    payload = base64.b64encode(json.dumps({
+        "sub": str(user_id),
+        "email": email,
+        "exp": (datetime.utcnow() + timedelta(days=7)).isoformat(),
+        "iat": datetime.utcnow().isoformat()
+    }).encode()).decode().rstrip('=')
+    signature = hashlib.sha256(f"{header}.{payload}.{JWT_SECRET}".encode()).hexdigest()
+    return f"{header}.{payload}.{signature}"
+
+def verify_token(token: str) -> Optional[dict]:
+    """Verify token and return payload"""
+    try:
+        parts = token.split('.')
+        if len(parts) != 3:
+            return None
+        header, payload, signature = parts
+        # Verify signature
+        expected = hashlib.sha256(f"{header}.{payload}.{JWT_SECRET}".encode()).hexdigest()
+        if signature != expected:
+            return None
+        # Decode payload
+        payload_data = json.loads(base64.b64decode(payload + '==').decode())
+        # Check expiration
+        exp = datetime.fromisoformat(payload_data['exp'])
+        if datetime.utcnow() > exp:
+            return None
+        return payload_data
+    except Exception:
+        return None
+
+def get_user_by_email(email: str) -> Optional[dict]:
+    """Get user by email"""
+    conn = sqlite3.connect(str(DB_PATH))
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM users WHERE email = ?", (email,))
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+def create_user(email: str, password: str, name: str = None) -> dict:
+    """Create new user"""
+    conn = sqlite3.connect(str(DB_PATH))
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    password_hash = hash_password(password)
+    cursor.execute(
+        "INSERT INTO users (email, password_hash, name) VALUES (?, ?, ?)",
+        (email, password_hash, name)
+    )
+    user_id = cursor.lastrowid
+    conn.commit()
+    cursor.execute("SELECT * FROM users WHERE id = ?", (user_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row)
+
+def update_last_login(user_id: int):
+    """Update last login timestamp"""
+    conn = sqlite3.connect(str(DB_PATH))
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = ?",
+        (user_id,)
+    )
+    conn.commit()
+    conn.close()
+
+# Initialize database
+init_db()
 
 app = FastAPI(
     title="Narrato API",
@@ -51,11 +163,31 @@ app = FastAPI(
 # CORS for frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Restrict in production
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Authentication dependency
+async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)) -> Optional[dict]:
+    if not credentials:
+        return None
+    payload = verify_token(credentials.credentials)
+    if not payload:
+        return None
+    return get_user_by_email(payload['email'])
+
+async def require_auth(credentials: HTTPAuthorizationCredentials = Depends(security)) -> dict:
+    if not credentials:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    payload = verify_token(credentials.credentials)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    user = get_user_by_email(payload['email'])
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found")
+    return user
 
 # In-memory job storage (use Redis in production)
 jobs = {}
@@ -79,6 +211,25 @@ class ProcessRequest(BaseModel):
 
 class ScriptUpdateRequest(BaseModel):
     script: str = Field(..., min_length=10, description="Edited narration script")
+
+
+# Authentication Models
+class RegisterRequest(BaseModel):
+    email: str = Field(..., regex=r'^[^@]+@[^@]+\.[^@]+$')
+    password: str = Field(..., min_length=8)
+    name: Optional[str] = None
+
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+class AuthResponse(BaseModel):
+    success: bool
+    message: str
+    token: Optional[str] = None
+    user: Optional[dict] = None
 
 
 # Job Status Constants
@@ -482,6 +633,67 @@ async def continue_voiceover_generation(job_id: str, script: str):
 
 
 # API Endpoints
+
+@app.post("/auth/register", response_model=AuthResponse)
+async def register(request: RegisterRequest):
+    """Register a new user"""
+    # Check if user already exists
+    existing = get_user_by_email(request.email)
+    if existing:
+        return AuthResponse(success=False, message="Email already registered")
+    
+    # Create user
+    user = create_user(request.email, request.password, request.name)
+    token = create_token(user['id'], user['email'])
+    
+    return AuthResponse(
+        success=True,
+        message="Registration successful",
+        token=token,
+        user={"id": user['id'], "email": user['email'], "name": user['name']}
+    )
+
+
+@app.post("/auth/login", response_model=AuthResponse)
+async def login(request: LoginRequest):
+    """Login user"""
+    user = get_user_by_email(request.email)
+    if not user or not verify_password(user['password_hash'], request.password):
+        return AuthResponse(success=False, message="Invalid email or password")
+    
+    # Update last login
+    update_last_login(user['id'])
+    
+    # Create token
+    token = create_token(user['id'], user['email'])
+    
+    return AuthResponse(
+        success=True,
+        message="Login successful",
+        token=token,
+        user={"id": user['id'], "email": user['email'], "name": user['name']}
+    )
+
+
+@app.get("/auth/me")
+async def get_me(user: dict = Depends(get_current_user)):
+    """Get current user info"""
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return {
+        "id": user['id'],
+        "email": user['email'],
+        "name": user['name'],
+        "created_at": user['created_at']
+    }
+
+
+@app.post("/auth/logout")
+async def logout():
+    """Logout (client-side token deletion)"""
+    return {"success": True, "message": "Logged out successfully"}
+
+
 @app.get("/", response_class=HTMLResponse)
 async def root():
     """Serve the frontend HTML"""
@@ -493,9 +705,10 @@ async def upload_video(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     voice: str = "en-US-AriaNeural",
-    num_frames: int = 5
+    num_frames: int = 5,
+    user: dict = Depends(require_auth)
 ):
-    """Upload a video and start processing"""
+    """Upload a video and start processing (requires authentication)"""
     
     # Validate file type
     allowed_types = ['video/mp4', 'video/quicktime', 'video/x-msvideo', 'video/webm']
@@ -513,9 +726,10 @@ async def upload_video(
         content = await file.read()
         f.write(content)
     
-    # Create job entry
+    # Create job entry with user association
     jobs[job_id] = {
         "job_id": job_id,
+        "user_id": user['id'],
         "status": Status.PENDING,
         "progress": 0,
         "message": "Video uploaded, starting processing...",
@@ -539,12 +753,16 @@ async def upload_video(
 
 
 @app.get("/status/{job_id}")
-async def get_status(job_id: str):
-    """Get processing status"""
+async def get_status(job_id: str, user: dict = Depends(require_auth)):
+    """Get processing status (requires authentication)"""
     if job_id not in jobs:
         raise HTTPException(404, "Job not found")
     
     job = jobs[job_id]
+    # Verify job belongs to user
+    if job.get('user_id') != user['id']:
+        raise HTTPException(403, "Access denied")
+    
     response = {
         "job_id": job_id,
         "status": job["status"],
@@ -567,13 +785,18 @@ async def get_status(job_id: str):
 async def approve_script(
     job_id: str,
     background_tasks: BackgroundTasks,
-    request: ScriptUpdateRequest = None
+    request: ScriptUpdateRequest = None,
+    user: dict = Depends(require_auth)
 ):
-    """Submit edited script and continue with voice generation"""
+    """Submit edited script and continue with voice generation (requires authentication)"""
     if job_id not in jobs:
         raise HTTPException(404, "Job not found")
     
     job = jobs[job_id]
+    # Verify job belongs to user
+    if job.get('user_id') != user['id']:
+        raise HTTPException(403, "Access denied")
+    
     if job["status"] != Status.WAITING_FOR_APPROVAL:
         raise HTTPException(400, f"Job not ready for approval. Status: {job['status']}")
     
@@ -608,12 +831,16 @@ async def approve_script(
 
 
 @app.get("/download/{job_id}")
-async def download_video(job_id: str):
-    """Download processed video"""
+async def download_video(job_id: str, user: dict = Depends(require_auth)):
+    """Download processed video (requires authentication)"""
     if job_id not in jobs:
         raise HTTPException(404, "Job not found")
     
     job = jobs[job_id]
+    # Verify job belongs to user
+    if job.get('user_id') != user['id']:
+        raise HTTPException(403, "Access denied")
+    
     if job["status"] != Status.COMPLETED:
         raise HTTPException(400, f"Video not ready. Status: {job['status']}")
     
