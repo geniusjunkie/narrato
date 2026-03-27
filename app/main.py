@@ -14,11 +14,13 @@ from datetime import datetime
 from pathlib import Path
 
 from fastapi import FastAPI, File, UploadFile, HTTPException, BackgroundTasks, WebSocket
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 import uvicorn
+
+# Import frontend HTML
+from app.frontend import FRONTEND_HTML
 
 # Video processing imports
 import cv2
@@ -58,11 +60,6 @@ app.add_middleware(
 
 # In-memory job storage (use Redis in production)
 jobs = {}
-
-# Mount static files (frontend)
-static_dir = Path(__file__).parent.parent / "static"
-if static_dir.exists():
-    app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
 # Pydantic Models
 class JobStatus(BaseModel):
@@ -288,21 +285,10 @@ async def process_video_job(job_id: str, video_path: str, voice: str, num_frames
 
 
 # API Endpoints
-@app.get("/")
+@app.get("/", response_class=HTMLResponse)
 async def root():
     """Serve the frontend HTML"""
-    index_path = static_dir / "index.html"
-    if index_path.exists():
-        return FileResponse(str(index_path))
-    return {
-        "message": "Narrato API",
-        "version": "1.0.0",
-        "endpoints": {
-            "upload": "POST /upload",
-            "status": "GET /status/{job_id}",
-            "download": "GET /download/{job_id}"
-        }
-    }
+    return FRONTEND_HTML
 
 
 @app.post("/upload")
