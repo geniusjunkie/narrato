@@ -327,14 +327,12 @@ FRONTEND_HTML = '''<!DOCTYPE html>
         <div class="settings-panel">
             <h4>Voice Settings</h4>
             <div class="form-group">
-                <label for="voiceSelect">Select Voice</label>
+                <label for="voiceSelect">Select Voice Region</label>
                 <select id="voiceSelect">
-                    <option value="en-US-AriaNeural">Aria — US Female (Professional)</option>
-                    <option value="en-US-GuyNeural">Guy — US Male (Professional)</option>
-                    <option value="en-GB-SoniaNeural">Sonia — UK Female</option>
-                    <option value="en-GB-RyanNeural">Ryan — UK Male</option>
-                    <option value="en-AU-NatashaNeural">Natasha — Australian Female</option>
-                    <option value="en-IN-NeerjaNeural">Neerja — Indian Female</option>
+                    <option value="en-US-AriaNeural">English (US) — Default</option>
+                    <option value="en-GB-SoniaNeural">English (UK)</option>
+                    <option value="en-AU-NatashaNeural">English (Australian)</option>
+                    <option value="en-IN-NeerjaNeural">English (Indian)</option>
                 </select>
             </div>
         </div>
