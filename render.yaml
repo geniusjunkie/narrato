@@ -1,0 +1,23 @@
+# Render.com Deployment Configuration
+# https://render.com/docs
+
+services:
+  - type: web
+    name: narrato
+    runtime: python
+    plan: free
+    buildCommand: |
+      apt-get update && apt-get install -y ffmpeg libsm6 libxext6 libgl1
+      pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: GROQ_API_KEY
+        sync: false  # Set in Render dashboard
+      - key: GOOGLE_API_KEY
+        sync: false  # Set in Render dashboard
+    disk:
+      name: narrato-storage
+      mountPath: /opt/render/project/src/uploads
+      sizeGB: 1

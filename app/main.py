@@ -1,0 +1,447 @@
+"""
+Narrato - FastAPI Backend
+AI-powered video voiceover generation
+"""
+
+import os
+import uuid
+import asyncio
+import base64
+import io
+import json
+from typing import Optional
+from datetime import datetime
+from pathlib import Path
+
+from fastapi import FastAPI, File, UploadFile, HTTPException, BackgroundTasks, WebSocket
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
+import uvicorn
+
+# Video processing imports
+import cv2
+from PIL import Image
+from moviepy.editor import VideoFileClip, AudioFileClip, concatenate_audioclips
+import edge_tts
+import requests
+from groq import Groq
+
+# Configuration
+UPLOAD_DIR = Path("uploads")
+OUTPUT_DIR = Path("outputs")
+TEMP_DIR = Path("temp")
+
+# Create directories
+for dir_path in [UPLOAD_DIR, OUTPUT_DIR, TEMP_DIR]:
+    dir_path.mkdir(exist_ok=True)
+
+# API Keys from environment
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "")
+
+app = FastAPI(
+    title="Narrato API",
+    description="AI-powered video voiceover generation",
+    version="1.0.0"
+)
+
+# CORS for frontend
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Restrict in production
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# In-memory job storage (use Redis in production)
+jobs = {}
+
+# Mount static files (frontend)
+static_dir = Path(__file__).parent.parent / "static"
+if static_dir.exists():
+    app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+
+# Pydantic Models
+class JobStatus(BaseModel):
+    job_id: str
+    status: str  # pending, processing, analyzing, scripting, voicing, merging, completed, failed
+    progress: int = Field(0, ge=0, le=100)
+    message: str
+    created_at: str
+    completed_at: Optional[str] = None
+    output_url: Optional[str] = None
+    error: Optional[str] = None
+
+
+class ProcessRequest(BaseModel):
+    voice: str = "en-US-AriaNeural"  # Default voice
+    num_frames: int = 5
+
+
+# Job Status Constants
+class Status:
+    PENDING = "pending"
+    PROCESSING = "processing"
+    ANALYZING = "analyzing"
+    SCRIPTING = "scripting"
+    VOICING = "voicing"
+    MERGING = "merging"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+# Helper Functions
+def update_job(job_id: str, status: str, progress: int, message: str, error: str = None):
+    """Update job status in memory store"""
+    if job_id in jobs:
+        jobs[job_id].update({
+            "status": status,
+            "progress": progress,
+            "message": message,
+            "error": error
+        })
+        if status == Status.COMPLETED:
+            jobs[job_id]["completed_at"] = datetime.now().isoformat()
+            jobs[job_id]["output_url"] = f"/download/{job_id}"
+
+
+def extract_key_frames(video_path: str, num_frames: int = 5):
+    """Extract evenly spaced frames from video"""
+    cap = cv2.VideoCapture(video_path)
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    duration = total_frames / fps if fps > 0 else 0
+    
+    if total_frames == 0:
+        cap.release()
+        raise ValueError("Could not read video file")
+    
+    # Calculate frame positions
+    frame_positions = [int(total_frames * i / (num_frames - 1)) for i in range(num_frames)]
+    
+    frames = []
+    for pos in frame_positions:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, pos)
+        ret, frame = cap.read()
+        if ret:
+            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            img = Image.fromarray(frame_rgb)
+            frames.append(img)
+    
+    cap.release()
+    return frames, duration
+
+
+def analyze_frame_with_gemini(image: Image.Image, api_key: str) -> str:
+    """Send frame to Gemini AI for analysis"""
+    buffered = io.BytesIO()
+    image.save(buffered, format="JPEG")
+    img_str = base64.b64encode(buffered.getvalue()).decode()
+    
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
+    
+    headers = {'Content-Type': 'application/json'}
+    data = {
+        "contents": [{
+            "parts": [{
+                "text": "Describe what is happening in this screen recording frame in one sentence. Be specific about any UI elements, buttons, or actions being shown."
+            }, {
+                "inline_data": {
+                    "mime_type": "image/jpeg",
+                    "data": img_str
+                }
+            }]
+        }]
+    }
+    
+    try:
+        response = requests.post(url, headers=headers, json=data, timeout=30)
+        result = response.json()
+        
+        if 'candidates' in result and len(result['candidates']) > 0:
+            return result['candidates'][0]['content']['parts'][0]['text']
+        else:
+            return "Frame shows part of the tutorial"
+    except Exception as e:
+        return f"Frame shows tutorial content"
+
+
+def generate_script(descriptions: list, duration: float, api_key: str) -> str:
+    """Generate narration script from frame descriptions"""
+    client = Groq(api_key=api_key)
+    
+    context = "\n".join([f"Frame {i+1}: {desc}" for i, desc in enumerate(descriptions)])
+    target_words = int(duration * 150 / 60)  # ~150 words per minute
+    
+    prompt = f"""You are a professional tutorial narrator. Write a clear, engaging voiceover script for a tutorial video.
+
+Video frames description:
+{context}
+
+Target length: approximately {target_words} words (for a {duration:.0f} second video)
+
+Write a natural-sounding narration that explains what's happening step by step. Use simple, clear language. Don't mention "frames" or "the video shows" - just narrate as if you're guiding someone through the process in real-time.
+
+Format as clean paragraphs."""
+
+    response = client.chat.completions.create(
+        model="llama-3.1-8b-instant",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.7,
+        max_tokens=1500
+    )
+    
+    return response.choices[0].message.content
+
+
+async def generate_voiceover(text: str, voice: str, output_path: str):
+    """Generate voice using Microsoft Edge TTS"""
+    communicate = edge_tts.Communicate(text, voice)
+    await communicate.save(output_path)
+
+
+def merge_video_audio(video_path: str, audio_path: str, output_path: str):
+    """Combine video and audio into final output"""
+    video_clip = VideoFileClip(video_path)
+    audio_clip = AudioFileClip(audio_path)
+    
+    video_duration = video_clip.duration
+    audio_duration = audio_clip.duration
+    
+    # Handle duration mismatch
+    if audio_duration > video_duration:
+        audio_clip = audio_clip.subclip(0, video_duration)
+    elif video_duration > audio_duration:
+        loops = int(video_duration / audio_duration) + 1
+        audio_clip = concatenate_audioclips([audio_clip] * loops).subclip(0, video_duration)
+    
+    # Merge
+    final_clip = video_clip.set_audio(audio_clip)
+    
+    # Export
+    final_clip.write_videofile(
+        output_path,
+        codec='libx264',
+        audio_codec='aac',
+        fps=30,
+        verbose=False,
+        logger=None
+    )
+    
+    video_clip.close()
+    audio_clip.close()
+    final_clip.close()
+    
+    return output_path
+
+
+async def process_video_job(job_id: str, video_path: str, voice: str, num_frames: int):
+    """Background task to process video"""
+    try:
+        # Validate API keys
+        if not GROQ_API_KEY or not GOOGLE_API_KEY:
+            raise ValueError("API keys not configured. Set GROQ_API_KEY and GOOGLE_API_KEY environment variables.")
+        
+        # Step 1: Extract frames
+        update_job(job_id, Status.ANALYZING, 10, "Extracting frames from video...")
+        frames, duration = extract_key_frames(video_path, num_frames)
+        
+        # Step 2: Analyze frames
+        update_job(job_id, Status.ANALYZING, 30, f"Analyzing {len(frames)} video frames with AI...")
+        frame_descriptions = []
+        for i, frame in enumerate(frames):
+            desc = analyze_frame_with_gemini(frame, GOOGLE_API_KEY)
+            frame_descriptions.append(desc)
+            update_job(job_id, Status.ANALYZING, 30 + (i * 10), f"Analyzed frame {i+1}/{len(frames)}")
+        
+        # Step 3: Generate script
+        update_job(job_id, Status.SCRIPTING, 50, "Generating voiceover script...")
+        script = generate_script(frame_descriptions, duration, GROQ_API_KEY)
+        
+        # Save script for reference
+        script_path = OUTPUT_DIR / f"{job_id}_script.txt"
+        with open(script_path, 'w') as f:
+            f.write(script)
+        
+        # Step 4: Generate voiceover
+        update_job(job_id, Status.VOICING, 70, "Generating AI voiceover...")
+        audio_path = str(TEMP_DIR / f"{job_id}_voiceover.mp3")
+        await generate_voiceover(script, voice, audio_path)
+        
+        # Step 5: Merge video and audio
+        update_job(job_id, Status.MERGING, 90, "Merging video and audio...")
+        output_path = str(OUTPUT_DIR / f"{job_id}_final.mp4")
+        merge_video_audio(video_path, audio_path, output_path)
+        
+        # Cleanup temp files
+        if os.path.exists(audio_path):
+            os.remove(audio_path)
+        
+        # Mark complete
+        update_job(job_id, Status.COMPLETED, 100, "Video processing complete!", output_url=f"/download/{job_id}")
+        
+    except Exception as e:
+        update_job(job_id, Status.FAILED, 0, f"Error: {str(e)}", error=str(e))
+
+
+# API Endpoints
+@app.get("/")
+async def root():
+    """Serve the frontend HTML"""
+    index_path = static_dir / "index.html"
+    if index_path.exists():
+        return FileResponse(str(index_path))
+    return {
+        "message": "Narrato API",
+        "version": "1.0.0",
+        "endpoints": {
+            "upload": "POST /upload",
+            "status": "GET /status/{job_id}",
+            "download": "GET /download/{job_id}"
+        }
+    }
+
+
+@app.post("/upload")
+async def upload_video(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    voice: str = "en-US-AriaNeural",
+    num_frames: int = 5
+):
+    """Upload a video and start processing"""
+    
+    # Validate file type
+    allowed_types = ['video/mp4', 'video/quicktime', 'video/x-msvideo', 'video/webm']
+    if file.content_type not in allowed_types:
+        raise HTTPException(400, f"Invalid file type. Allowed: {allowed_types}")
+    
+    # Generate job ID
+    job_id = str(uuid.uuid4())[:8]
+    
+    # Save uploaded file
+    file_ext = file.filename.split('.')[-1]
+    video_path = str(UPLOAD_DIR / f"{job_id}.{file_ext}")
+    
+    with open(video_path, "wb") as f:
+        content = await file.read()
+        f.write(content)
+    
+    # Create job entry
+    jobs[job_id] = {
+        "job_id": job_id,
+        "status": Status.PENDING,
+        "progress": 0,
+        "message": "Video uploaded, starting processing...",
+        "created_at": datetime.now().isoformat(),
+        "completed_at": None,
+        "output_url": None,
+        "error": None,
+        "video_path": video_path
+    }
+    
+    # Start background processing
+    background_tasks.add_task(process_video_job, job_id, video_path, voice, num_frames)
+    update_job(job_id, Status.PROCESSING, 5, "Starting video analysis...")
+    
+    return {
+        "job_id": job_id,
+        "status": Status.PENDING,
+        "message": "Video uploaded successfully. Processing started.",
+        "check_status": f"/status/{job_id}"
+    }
+
+
+@app.get("/status/{job_id}")
+async def get_status(job_id: str):
+    """Get processing status"""
+    if job_id not in jobs:
+        raise HTTPException(404, "Job not found")
+    
+    job = jobs[job_id]
+    return {
+        "job_id": job_id,
+        "status": job["status"],
+        "progress": job["progress"],
+        "message": job["message"],
+        "created_at": job["created_at"],
+        "completed_at": job.get("completed_at"),
+        "output_url": job.get("output_url"),
+        "error": job.get("error")
+    }
+
+
+@app.get("/download/{job_id}")
+async def download_video(job_id: str):
+    """Download processed video"""
+    if job_id not in jobs:
+        raise HTTPException(404, "Job not found")
+    
+    job = jobs[job_id]
+    if job["status"] != Status.COMPLETED:
+        raise HTTPException(400, f"Video not ready. Status: {job['status']}")
+    
+    output_path = OUTPUT_DIR / f"{job_id}_final.mp4"
+    if not output_path.exists():
+        raise HTTPException(404, "Output file not found")
+    
+    return FileResponse(
+        path=output_path,
+        filename=f"narrato_{job_id}.mp4",
+        media_type="video/mp4"
+    )
+
+
+@app.get("/voices")
+async def list_voices():
+    """List available voices"""
+    return {
+        "voices": [
+            {"id": "en-US-AriaNeural", "name": "Aria (US Female)", "language": "English (US)"},
+            {"id": "en-US-GuyNeural", "name": "Guy (US Male)", "language": "English (US)"},
+            {"id": "en-GB-SoniaNeural", "name": "Sonia (UK Female)", "language": "English (UK)"},
+            {"id": "en-GB-RyanNeural", "name": "Ryan (UK Male)", "language": "English (UK)"},
+            {"id": "en-AU-NatashaNeural", "name": "Natasha (AU Female)", "language": "English (Australia)"},
+            {"id": "en-IN-NeerjaNeural", "name": "Neerja (IN Female)", "language": "English (India)"},
+            {"id": "es-ES-ElviraNeural", "name": "Elvira (Spanish Female)", "language": "Spanish"},
+            {"id": "fr-FR-DeniseNeural", "name": "Denise (French Female)", "language": "French"},
+            {"id": "de-DE-KatjaNeural", "name": "Katja (German Female)", "language": "German"},
+        ]
+    }
+
+
+# WebSocket for real-time updates (optional)
+@app.websocket("/ws/{job_id}")
+async def websocket_endpoint(websocket: WebSocket, job_id: str):
+    await websocket.accept()
+    
+    if job_id not in jobs:
+        await websocket.send_json({"error": "Job not found"})
+        await websocket.close()
+        return
+    
+    # Send current status
+    await websocket.send_json(jobs[job_id])
+    
+    # Keep connection open and poll for updates
+    last_status = jobs[job_id]["status"]
+    while last_status not in [Status.COMPLETED, Status.FAILED]:
+        await asyncio.sleep(1)
+        if job_id in jobs:
+            current = jobs[job_id]
+            if current["status"] != last_status or current.get("progress") != jobs[job_id].get("progress"):
+                await websocket.send_json(current)
+                last_status = current["status"]
+    
+    # Send final status
+    if job_id in jobs:
+        await websocket.send_json(jobs[job_id])
+    
+    await websocket.close()
+
+
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=8000)
