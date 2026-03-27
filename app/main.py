@@ -26,7 +26,7 @@ from app.frontend import FRONTEND_HTML
 import cv2
 from PIL import Image
 from moviepy.editor import VideoFileClip, AudioFileClip, concatenate_audioclips
-import edge_tts
+from gtts import gTTS
 import requests
 from groq import Groq
 
@@ -203,9 +203,25 @@ Format as clean paragraphs."""
 
 
 async def generate_voiceover(text: str, voice: str, output_path: str):
-    """Generate voice using Microsoft Edge TTS"""
-    communicate = edge_tts.Communicate(text, voice)
-    await communicate.save(output_path)
+    """Generate voice using Google TTS (FREE - works on all servers)"""
+    # Map voice to language code (gTTS uses simple lang codes)
+    lang_map = {
+        "en-US-AriaNeural": "en",
+        "en-US-GuyNeural": "en",
+        "en-GB-SoniaNeural": "en",
+        "en-GB-RyanNeural": "en",
+        "en-AU-NatashaNeural": "en",
+        "en-IN-NeerjaNeural": "en",
+    }
+    lang = lang_map.get(voice, "en")
+    
+    # Run gTTS in thread pool since it's blocking
+    def _generate():
+        tts = gTTS(text=text, lang=lang, slow=False)
+        tts.save(output_path)
+    
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, _generate)
 
 
 def merge_video_audio(video_path: str, audio_path: str, output_path: str):
