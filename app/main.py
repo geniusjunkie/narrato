@@ -77,12 +77,17 @@ class ProcessRequest(BaseModel):
     num_frames: int = 5
 
 
+class ScriptUpdateRequest(BaseModel):
+    script: str = Field(..., min_length=10, description="Edited narration script")
+
+
 # Job Status Constants
 class Status:
     PENDING = "pending"
     PROCESSING = "processing"
     ANALYZING = "analyzing"
     SCRIPTING = "scripting"
+    WAITING_FOR_APPROVAL = "waiting_for_approval"
     VOICING = "voicing"
     MERGING = "merging"
     COMPLETED = "completed"
@@ -387,7 +392,38 @@ async def process_video_job(job_id: str, video_path: str, voice: str, num_frames
                 f.write(script)
         await loop.run_in_executor(None, _save_script)
         
-        # Step 4: Generate voiceover (already async with thread pool inside)
+        # Store script in job data for frontend retrieval
+        jobs[job_id]["script"] = script
+        jobs[job_id]["video_path"] = video_path
+        jobs[job_id]["voice"] = voice
+        
+        # PAUSE HERE - Wait for user to review/edit script
+        update_job(job_id, Status.WAITING_FOR_APPROVAL, 50, "Script ready! Review and edit before generating voiceover.")
+        print(f"[INFO] Job {job_id} waiting for script approval")
+        
+    except Exception as e:
+        import traceback
+        error_msg = str(e)
+        print(f"[ERROR] Job {job_id} failed: {error_msg}")
+        print(traceback.format_exc())
+        # Preserve the last progress instead of resetting to 0
+        current_progress = jobs.get(job_id, {}).get("progress", 0)
+        update_job(job_id, Status.FAILED, current_progress, f"Failed at {current_progress}%: {error_msg}", error=error_msg)
+
+
+async def continue_voiceover_generation(job_id: str, script: str):
+    """Continue processing after script is approved - voice generation and merge"""
+    loop = asyncio.get_event_loop()
+    
+    try:
+        # Get stored job data
+        video_path = jobs[job_id].get("video_path")
+        voice = jobs[job_id].get("voice", "en-US-AriaNeural")
+        
+        if not video_path:
+            raise Exception("Video path not found in job data")
+        
+        # Step 4: Generate voiceover
         update_job(job_id, Status.VOICING, 60, "Generating AI voiceover...")
         audio_path = str(TEMP_DIR / f"{job_id}_voiceover.mp3")
         await generate_voiceover(script, voice, audio_path)
@@ -439,9 +475,8 @@ async def process_video_job(job_id: str, video_path: str, voice: str, num_frames
     except Exception as e:
         import traceback
         error_msg = str(e)
-        print(f"[ERROR] Job {job_id} failed: {error_msg}")
+        print(f"[ERROR] Job {job_id} failed during voiceover: {error_msg}")
         print(traceback.format_exc())
-        # Preserve the last progress instead of resetting to 0
         current_progress = jobs.get(job_id, {}).get("progress", 0)
         update_job(job_id, Status.FAILED, current_progress, f"Failed at {current_progress}%: {error_msg}", error=error_msg)
 
@@ -510,7 +545,7 @@ async def get_status(job_id: str):
         raise HTTPException(404, "Job not found")
     
     job = jobs[job_id]
-    return {
+    response = {
         "job_id": job_id,
         "status": job["status"],
         "progress": job["progress"],
@@ -519,6 +554,56 @@ async def get_status(job_id: str):
         "completed_at": job.get("completed_at"),
         "output_url": job.get("output_url"),
         "error": job.get("error")
+    }
+    
+    # Include script when waiting for approval
+    if job["status"] == Status.WAITING_FOR_APPROVAL:
+        response["script"] = job.get("script", "")
+    
+    return response
+
+
+@app.post("/approve-script/{job_id}")
+async def approve_script(
+    job_id: str,
+    background_tasks: BackgroundTasks,
+    request: ScriptUpdateRequest = None
+):
+    """Submit edited script and continue with voice generation"""
+    if job_id not in jobs:
+        raise HTTPException(404, "Job not found")
+    
+    job = jobs[job_id]
+    if job["status"] != Status.WAITING_FOR_APPROVAL:
+        raise HTTPException(400, f"Job not ready for approval. Status: {job['status']}")
+    
+    # Use edited script if provided, otherwise use the generated one
+    if request and request.script.strip():
+        script = request.script.strip()
+        # Update saved script
+        script_path = OUTPUT_DIR / f"{job_id}_script.txt"
+        def _update_script():
+            with open(script_path, 'w') as f:
+                f.write(script)
+        await asyncio.get_event_loop().run_in_executor(None, _update_script)
+        jobs[job_id]["script"] = script
+        print(f"[INFO] Job {job_id} using edited script")
+    else:
+        script = job.get("script", "")
+        print(f"[INFO] Job {job_id} using original script")
+    
+    if not script:
+        raise HTTPException(400, "No script available for voice generation")
+    
+    # Start voice generation in background
+    background_tasks.add_task(continue_voiceover_generation, job_id, script)
+    update_job(job_id, Status.VOICING, 55, "Starting voice generation with your script...")
+    
+    return {
+        "job_id": job_id,
+        "status": Status.VOICING,
+        "message": "Script approved! Generating voiceover...",
+        "check_status": f"/status/{job_id}"
     }
 
 

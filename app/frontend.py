@@ -226,6 +226,58 @@ FRONTEND_HTML = '''<!DOCTYPE html>
             display: none;
         }
         .result-section.active { display: block; }
+        .script-section {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 1rem;
+            padding: 2rem;
+            margin-top: 1.5rem;
+            display: none;
+        }
+        .script-section.active { display: block; }
+        .script-editor {
+            width: 100%;
+            min-height: 200px;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: 0.5rem;
+            padding: 1rem;
+            color: var(--text-primary);
+            font-family: 'Inter', sans-serif;
+            font-size: 0.9375rem;
+            line-height: 1.6;
+            resize: vertical;
+            margin-bottom: 1rem;
+        }
+        .script-editor:focus {
+            outline: none;
+            border-color: var(--accent-primary);
+        }
+        .script-editor-label {
+            font-size: 0.875rem;
+            font-weight: 500;
+            color: var(--text-secondary);
+            margin-bottom: 0.5rem;
+            display: block;
+        }
+        .script-hint {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            margin-bottom: 1rem;
+        }
+        .btn-primary {
+            background: var(--accent-gradient);
+            color: white;
+            border: none;
+            padding: 0.75rem 1.5rem;
+            border-radius: 0.5rem;
+            font-weight: 600;
+            font-size: 0.875rem;
+            cursor: pointer;
+        }
+        .btn-primary:hover {
+            opacity: 0.9;
+        }
         .btn-group {
             display: flex;
             gap: 1rem;
@@ -349,6 +401,17 @@ FRONTEND_HTML = '''<!DOCTYPE html>
                 <div class="progress-bar" id="progressBar"></div>
             </div>
         </div>
+        <div class="script-section" id="scriptSection">
+            <h3>Review Your Script</h3>
+            <p style="color: var(--text-secondary); margin-bottom: 1rem;">AI generated this narration based on your video. Edit it below, then click Generate Voiceover.</p>
+            <label class="script-editor-label" for="scriptEditor">Narration Script</label>
+            <textarea class="script-editor" id="scriptEditor" placeholder="Your script will appear here..."></textarea>
+            <p class="script-hint">💡 Tip: Keep it natural and conversational. The script should match what's shown in your video.</p>
+            <div class="btn-group">
+                <button class="btn-primary" id="generateVoiceoverBtn">Generate Voiceover</button>
+                <button class="btn-secondary" id="cancelBtn">Cancel</button>
+            </div>
+        </div>
         <div class="result-section" id="resultSection">
             <h3>Your video is ready!</h3>
             <p>AI voiceover added successfully</p>
@@ -392,11 +455,15 @@ FRONTEND_HTML = '''<!DOCTYPE html>
         const fileInput = document.getElementById('fileInput');
         const voiceSelect = document.getElementById('voiceSelect');
         const progressSection = document.getElementById('progressSection');
+        const scriptSection = document.getElementById('scriptSection');
         const resultSection = document.getElementById('resultSection');
         const errorMessage = document.getElementById('errorMessage');
         const progressBar = document.getElementById('progressBar');
         const statusText = document.getElementById('statusText');
         const progressPercent = document.getElementById('progressPercent');
+        const scriptEditor = document.getElementById('scriptEditor');
+        const generateVoiceoverBtn = document.getElementById('generateVoiceoverBtn');
+        const cancelBtn = document.getElementById('cancelBtn');
         const downloadBtn = document.getElementById('downloadBtn');
         const createAnotherBtn = document.getElementById('createAnotherBtn');
         let currentJobId = null, pollInterval = null;
@@ -409,6 +476,10 @@ FRONTEND_HTML = '''<!DOCTYPE html>
             if (e.dataTransfer.files.length > 0) handleFile(e.dataTransfer.files[0]);
         });
         fileInput.addEventListener('change', (e) => { if (e.target.files.length > 0) handleFile(e.target.files[0]); });
+        
+        generateVoiceoverBtn.addEventListener('click', submitScript);
+        cancelBtn.addEventListener('click', () => { resetUI(); fileInput.value = ''; hideError(); });
+        createAnotherBtn.addEventListener('click', () => { resetUI(); fileInput.value = ''; hideError(); });
         
         function handleFile(file) {
             const allowedTypes = ['video/mp4', 'video/quicktime', 'video/x-msvideo', 'video/webm'];
@@ -425,12 +496,12 @@ FRONTEND_HTML = '''<!DOCTYPE html>
             progressSection.classList.add('active');
             uploadZone.style.display = 'none';
             document.querySelector('.settings-panel').style.display = 'none';
+            scriptSection.classList.remove('active');
             try {
                 const response = await fetch(`${API_URL}/upload`, { method: 'POST', body: formData });
                 if (!response.ok) { const error = await response.json(); throw new Error(error.detail || 'Upload failed'); }
                 const data = await response.json();
                 currentJobId = data.job_id;
-                // More frequent polling for smoother progress
                 pollInterval = setInterval(() => checkStatus(currentJobId), 500);
             } catch (error) { showError(error.message); resetUI(); }
         }
@@ -440,8 +511,20 @@ FRONTEND_HTML = '''<!DOCTYPE html>
                 const response = await fetch(`${API_URL}/status/${jobId}`);
                 const data = await response.json();
                 updateProgress(data);
-                if (data.status === 'completed') { clearInterval(pollInterval); showResult(jobId); }
-                else if (data.status === 'failed') { clearInterval(pollInterval); showError(data.error || 'Processing failed'); resetUI(); }
+                
+                if (data.status === 'waiting_for_approval') {
+                    clearInterval(pollInterval);
+                    showScriptEditor(data.script);
+                }
+                else if (data.status === 'completed') { 
+                    clearInterval(pollInterval); 
+                    showResult(jobId); 
+                }
+                else if (data.status === 'failed') { 
+                    clearInterval(pollInterval); 
+                    showError(data.error || 'Processing failed'); 
+                    resetUI(); 
+                }
             } catch (error) { console.error('Status check failed:', error); }
         }
         
@@ -452,24 +535,70 @@ FRONTEND_HTML = '''<!DOCTYPE html>
             statusText.textContent = data.message || 'Processing...';
         }
         
+        function showScriptEditor(script) {
+            progressSection.classList.remove('active');
+            scriptSection.classList.add('active');
+            scriptEditor.value = script || '';
+        }
+        
+        async function submitScript() {
+            if (!currentJobId) return;
+            
+            const script = scriptEditor.value.trim();
+            if (!script) {
+                showError('Please enter a script before generating voiceover.');
+                return;
+            }
+            
+            hideError();
+            generateVoiceoverBtn.disabled = true;
+            generateVoiceoverBtn.textContent = 'Submitting...';
+            
+            try {
+                const response = await fetch(`${API_URL}/approve-script/${currentJobId}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ script: script })
+                });
+                
+                if (!response.ok) { 
+                    const error = await response.json(); 
+                    throw new Error(error.detail || 'Failed to submit script'); 
+                }
+                
+                scriptSection.classList.remove('active');
+                progressSection.classList.add('active');
+                pollInterval = setInterval(() => checkStatus(currentJobId), 500);
+            } catch (error) { 
+                showError(error.message); 
+            } finally {
+                generateVoiceoverBtn.disabled = false;
+                generateVoiceoverBtn.textContent = 'Generate Voiceover';
+            }
+        }
+        
         function showResult(jobId) {
             progressSection.classList.remove('active');
+            scriptSection.classList.remove('active');
             resultSection.classList.add('active');
             downloadBtn.href = `${API_URL}/download/${jobId}`;
         }
         
         function resetUI() {
+            clearInterval(pollInterval);
             progressSection.classList.remove('active');
+            scriptSection.classList.remove('active');
             resultSection.classList.remove('active');
             uploadZone.style.display = 'block';
             document.querySelector('.settings-panel').style.display = 'block';
             progressBar.style.width = '0%';
             progressPercent.textContent = '0%';
+            scriptEditor.value = '';
+            currentJobId = null;
         }
         
         function showError(message) { errorMessage.textContent = message; errorMessage.classList.add('active'); }
         function hideError() { errorMessage.classList.remove('active'); }
-        createAnotherBtn.addEventListener('click', () => { resetUI(); fileInput.value = ''; hideError(); });
     </script>
 </body>
 </html>'''
