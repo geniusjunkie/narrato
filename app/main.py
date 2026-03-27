@@ -215,7 +215,7 @@ class ScriptUpdateRequest(BaseModel):
 
 # Authentication Models
 class RegisterRequest(BaseModel):
-    email: str = Field(..., regex=r'^[^@]+@[^@]+\.[^@]+$')
+    email: str = Field(..., pattern=r'^[^@]+@[^@]+\.[^@]+$')
     password: str = Field(..., min_length=8)
     name: Optional[str] = None
 
