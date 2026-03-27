@@ -94,15 +94,17 @@ class Status:
 def update_job(job_id: str, status: str, progress: int, message: str, error: str = None):
     """Update job status in memory store"""
     if job_id in jobs:
-        jobs[job_id].update({
+        update_data = {
             "status": status,
-            "progress": progress,
+            "progress": max(0, min(100, progress)),  # Clamp between 0-100
             "message": message,
-            "error": error
-        })
+        }
+        if error is not None:
+            update_data["error"] = error
         if status == Status.COMPLETED:
-            jobs[job_id]["completed_at"] = datetime.now().isoformat()
-            jobs[job_id]["output_url"] = f"/download/{job_id}"
+            update_data["completed_at"] = datetime.now().isoformat()
+            update_data["output_url"] = f"/download/{job_id}"
+        jobs[job_id].update(update_data)
 
 
 def extract_key_frames(video_path: str, num_frames: int = 5):
@@ -116,8 +118,14 @@ def extract_key_frames(video_path: str, num_frames: int = 5):
         cap.release()
         raise ValueError("Could not read video file")
     
-    # Calculate frame positions
-    frame_positions = [int(total_frames * i / (num_frames - 1)) for i in range(num_frames)]
+    # Ensure num_frames is at least 2 to avoid division by zero
+    num_frames = max(2, num_frames)
+    
+    # Calculate frame positions - avoid division by zero
+    if num_frames == 1:
+        frame_positions = [total_frames // 2]  # Middle frame
+    else:
+        frame_positions = [int(total_frames * i / (num_frames - 1)) for i in range(num_frames)]
     
     frames = []
     for pos in frame_positions:
@@ -243,19 +251,21 @@ async def process_video_job(job_id: str, video_path: str, voice: str, num_frames
             raise ValueError("API keys not configured. Set GROQ_API_KEY and GOOGLE_API_KEY environment variables.")
         
         # Step 1: Extract frames
-        update_job(job_id, Status.ANALYZING, 10, "Extracting frames from video...")
+        update_job(job_id, Status.ANALYZING, 5, "Extracting frames from video...")
         frames, duration = extract_key_frames(video_path, num_frames)
         
-        # Step 2: Analyze frames
-        update_job(job_id, Status.ANALYZING, 30, f"Analyzing {len(frames)} video frames with AI...")
+        # Step 2: Analyze frames (progress: 5% to 35%)
+        update_job(job_id, Status.ANALYZING, 10, f"Analyzing {len(frames)} video frames with AI...")
         frame_descriptions = []
         for i, frame in enumerate(frames):
             desc = analyze_frame_with_gemini(frame, GOOGLE_API_KEY)
             frame_descriptions.append(desc)
-            update_job(job_id, Status.ANALYZING, 30 + (i * 10), f"Analyzed frame {i+1}/{len(frames)}")
+            # Progress increases from 10% to 35% based on frame analysis
+            progress = 10 + int((i + 1) / len(frames) * 25)
+            update_job(job_id, Status.ANALYZING, progress, f"Analyzed frame {i+1}/{len(frames)}")
         
-        # Step 3: Generate script
-        update_job(job_id, Status.SCRIPTING, 50, "Generating voiceover script...")
+        # Step 3: Generate script (35% to 55%)
+        update_job(job_id, Status.SCRIPTING, 40, "Generating voiceover script...")
         script = generate_script(frame_descriptions, duration, GROQ_API_KEY)
         
         # Save script for reference
@@ -263,22 +273,25 @@ async def process_video_job(job_id: str, video_path: str, voice: str, num_frames
         with open(script_path, 'w') as f:
             f.write(script)
         
-        # Step 4: Generate voiceover
-        update_job(job_id, Status.VOICING, 70, "Generating AI voiceover...")
+        # Step 4: Generate voiceover (55% to 80%)
+        update_job(job_id, Status.VOICING, 60, "Generating AI voiceover...")
         audio_path = str(TEMP_DIR / f"{job_id}_voiceover.mp3")
         await generate_voiceover(script, voice, audio_path)
         
-        # Step 5: Merge video and audio
-        update_job(job_id, Status.MERGING, 90, "Merging video and audio...")
+        # Step 5: Merge video and audio (run in thread to not block event loop)
+        update_job(job_id, Status.MERGING, 85, "Merging video and audio...")
         output_path = str(OUTPUT_DIR / f"{job_id}_final.mp4")
-        merge_video_audio(video_path, audio_path, output_path)
+        
+        # Run CPU-intensive merge in thread pool
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, merge_video_audio, video_path, audio_path, output_path)
         
         # Cleanup temp files
         if os.path.exists(audio_path):
             os.remove(audio_path)
         
         # Mark complete
-        update_job(job_id, Status.COMPLETED, 100, "Video processing complete!", output_url=f"/download/{job_id}")
+        update_job(job_id, Status.COMPLETED, 100, "Video processing complete!")
         
     except Exception as e:
         update_job(job_id, Status.FAILED, 0, f"Error: {str(e)}", error=str(e))
@@ -414,13 +427,18 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
     
     # Keep connection open and poll for updates
     last_status = jobs[job_id]["status"]
+    last_progress = jobs[job_id].get("progress", 0)
+    
     while last_status not in [Status.COMPLETED, Status.FAILED]:
         await asyncio.sleep(1)
         if job_id in jobs:
             current = jobs[job_id]
-            if current["status"] != last_status or current.get("progress") != jobs[job_id].get("progress"):
+            current_progress = current.get("progress", 0)
+            # Check if status or progress changed
+            if current["status"] != last_status or current_progress != last_progress:
                 await websocket.send_json(current)
                 last_status = current["status"]
+                last_progress = current_progress
     
     # Send final status
     if job_id in jobs:
