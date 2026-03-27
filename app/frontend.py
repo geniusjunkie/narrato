@@ -384,7 +384,7 @@ FRONTEND_HTML = '''<!DOCTYPE html>
         </div>
     </section>
     <footer>
-        <p>Built by Genius Junkie • Powered by Groq AI, Google Gemini, and Microsoft Edge TTS</p>
+        <p>Built by Genius Junkie • Powered by Groq AI, Google Gemini, and Google TTS</p>
     </footer>
     <script>
         const API_URL = '';
@@ -430,7 +430,8 @@ FRONTEND_HTML = '''<!DOCTYPE html>
                 if (!response.ok) { const error = await response.json(); throw new Error(error.detail || 'Upload failed'); }
                 const data = await response.json();
                 currentJobId = data.job_id;
-                pollInterval = setInterval(() => checkStatus(currentJobId), 2000);
+                // More frequent polling for smoother progress
+                pollInterval = setInterval(() => checkStatus(currentJobId), 500);
             } catch (error) { showError(error.message); resetUI(); }
         }
         

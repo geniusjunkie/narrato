@@ -260,51 +260,62 @@ def merge_video_audio(video_path: str, audio_path: str, output_path: str):
 
 
 async def process_video_job(job_id: str, video_path: str, voice: str, num_frames: int):
-    """Background task to process video"""
+    """Background task to process video - ALL blocking ops run in thread pool"""
+    loop = asyncio.get_event_loop()
+    
     try:
         # Validate API keys
         if not GROQ_API_KEY or not GOOGLE_API_KEY:
             raise ValueError("API keys not configured. Set GROQ_API_KEY and GOOGLE_API_KEY environment variables.")
         
-        # Step 1: Extract frames
+        # Step 1: Extract frames (CPU-intensive, run in thread)
         update_job(job_id, Status.ANALYZING, 5, "Extracting frames from video...")
-        frames, duration = extract_key_frames(video_path, num_frames)
+        frames, duration = await loop.run_in_executor(
+            None, extract_key_frames, video_path, num_frames
+        )
         
-        # Step 2: Analyze frames (progress: 5% to 35%)
+        # Step 2: Analyze frames (network calls, run in thread)
         update_job(job_id, Status.ANALYZING, 10, f"Analyzing {len(frames)} video frames with AI...")
         frame_descriptions = []
         for i, frame in enumerate(frames):
-            desc = analyze_frame_with_gemini(frame, GOOGLE_API_KEY)
+            desc = await loop.run_in_executor(
+                None, analyze_frame_with_gemini, frame, GOOGLE_API_KEY
+            )
             frame_descriptions.append(desc)
             # Progress increases from 10% to 35% based on frame analysis
             progress = 10 + int((i + 1) / len(frames) * 25)
             update_job(job_id, Status.ANALYZING, progress, f"Analyzed frame {i+1}/{len(frames)}")
         
-        # Step 3: Generate script (35% to 55%)
+        # Step 3: Generate script (network call, run in thread)
         update_job(job_id, Status.SCRIPTING, 40, "Generating voiceover script...")
-        script = generate_script(frame_descriptions, duration, GROQ_API_KEY)
+        script = await loop.run_in_executor(
+            None, generate_script, frame_descriptions, duration, GROQ_API_KEY
+        )
         
-        # Save script for reference
+        # Save script for reference (file I/O, run in thread)
         script_path = OUTPUT_DIR / f"{job_id}_script.txt"
-        with open(script_path, 'w') as f:
-            f.write(script)
+        def _save_script():
+            with open(script_path, 'w') as f:
+                f.write(script)
+        await loop.run_in_executor(None, _save_script)
         
-        # Step 4: Generate voiceover (55% to 80%)
+        # Step 4: Generate voiceover (already async with thread pool inside)
         update_job(job_id, Status.VOICING, 60, "Generating AI voiceover...")
         audio_path = str(TEMP_DIR / f"{job_id}_voiceover.mp3")
         await generate_voiceover(script, voice, audio_path)
         
-        # Step 5: Merge video and audio (run in thread to not block event loop)
+        # Step 5: Merge video and audio (CPU-intensive, run in thread)
         update_job(job_id, Status.MERGING, 85, "Merging video and audio...")
         output_path = str(OUTPUT_DIR / f"{job_id}_final.mp4")
+        await loop.run_in_executor(
+            None, merge_video_audio, video_path, audio_path, output_path
+        )
         
-        # Run CPU-intensive merge in thread pool
-        loop = asyncio.get_event_loop()
-        await loop.run_in_executor(None, merge_video_audio, video_path, audio_path, output_path)
-        
-        # Cleanup temp files
-        if os.path.exists(audio_path):
-            os.remove(audio_path)
+        # Cleanup temp files (run in thread)
+        def _cleanup():
+            if os.path.exists(audio_path):
+                os.remove(audio_path)
+        await loop.run_in_executor(None, _cleanup)
         
         # Mark complete
         update_job(job_id, Status.COMPLETED, 100, "Video processing complete!")
