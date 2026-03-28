@@ -508,11 +508,12 @@ FRONTEND_HTML = '''<!DOCTYPE html>
                     <option value="en-AU-NatashaNeural">English (Australian)</option>
                     <option value="en-IN-NeerjaNeural">English (Indian)</option>
                 </select>
-                <div class="checkbox-group" style="margin-top: 1rem;">
-                    <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; color: var(--text-secondary); font-size: 0.875rem;">
-                        <input type="checkbox" id="subtitlesCheckbox" style="width: auto; cursor: pointer;">
+                <div class="checkbox-group" style="margin-top: 1.5rem; padding: 1rem; background: var(--bg-tertiary); border-radius: 0.75rem; border: 1px solid var(--border);">
+                    <label style="display: flex; align-items: center; gap: 0.75rem; cursor: pointer; color: var(--text-primary); font-size: 0.9375rem; font-weight: 500;">
+                        <input type="checkbox" id="subtitlesCheckbox" style="width: 20px; height: 20px; cursor: pointer; accent-color: var(--accent-primary);">
                         <span>Add subtitles to video</span>
                     </label>
+                    <p style="margin: 0.5rem 0 0 2rem; color: var(--text-secondary); font-size: 0.8rem; font-weight: normal;">Burn captions directly into your video</p>
                 </div>
             </div>
             
