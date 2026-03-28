@@ -501,13 +501,19 @@ FRONTEND_HTML = '''<!DOCTYPE html>
             </div>
             
             <div class="settings-panel">
-                <h4>Voice Settings</h4>
+                <h4>Settings</h4>
                 <select id="voiceSelect">
                     <option value="en-US-AriaNeural">English (US) — Default</option>
                     <option value="en-GB-SoniaNeural">English (UK)</option>
                     <option value="en-AU-NatashaNeural">English (Australian)</option>
                     <option value="en-IN-NeerjaNeural">English (Indian)</option>
                 </select>
+                <div class="checkbox-group" style="margin-top: 1rem;">
+                    <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; color: var(--text-secondary); font-size: 0.875rem;">
+                        <input type="checkbox" id="subtitlesCheckbox" style="width: auto; cursor: pointer;">
+                        <span>Add subtitles to video</span>
+                    </label>
+                </div>
             </div>
             
             <div class="error-message" id="errorMessage"></div>
@@ -572,6 +578,7 @@ FRONTEND_HTML = '''<!DOCTYPE html>
         const uploadZone = document.getElementById('uploadZone');
         const fileInput = document.getElementById('fileInput');
         const voiceSelect = document.getElementById('voiceSelect');
+        const subtitlesCheckbox = document.getElementById('subtitlesCheckbox');
         const progressSection = document.getElementById('progressSection');
         const scriptSection = document.getElementById('scriptSection');
         const resultSection = document.getElementById('resultSection');
@@ -777,6 +784,7 @@ FRONTEND_HTML = '''<!DOCTYPE html>
             currentJobId = null;
             fileInput.value = '';
             scriptEditor.value = '';
+            subtitlesCheckbox.checked = false;
             progressSection.classList.remove('active');
             scriptSection.classList.remove('active');
             resultSection.classList.remove('active');
@@ -813,6 +821,7 @@ FRONTEND_HTML = '''<!DOCTYPE html>
             formData.append('file', file);
             formData.append('voice', voiceSelect.value);
             formData.append('num_frames', '5');
+            formData.append('add_subtitles', subtitlesCheckbox.checked);
             progressSection.classList.add('active');
             uploadZone.style.display = 'none';
             document.querySelector('.settings-panel').style.display = 'none';

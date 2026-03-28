@@ -240,6 +240,7 @@ class Status:
     SCRIPTING = "scripting"
     WAITING_FOR_APPROVAL = "waiting_for_approval"
     VOICING = "voicing"
+    SUBTITLING = "subtitling"
     MERGING = "merging"
     COMPLETED = "completed"
     FAILED = "failed"
@@ -424,8 +425,43 @@ async def generate_voiceover(text: str, voice: str, output_path: str):
     await loop.run_in_executor(None, _generate)
 
 
-def merge_video_audio(video_path: str, audio_path: str, output_path: str):
-    """Combine video and audio using ffmpeg (memory-efficient, streams instead of loading into RAM)"""
+def generate_srt_subtitles(script: str, duration: float, output_path: str):
+    """Generate SRT subtitle file from script"""
+    # Split script into sentences/chunks
+    sentences = [s.strip() for s in script.replace('\n', ' ').split('.') if s.strip()]
+    
+    if not sentences:
+        sentences = [script]
+    
+    # Calculate time per sentence
+    time_per_sentence = duration / len(sentences)
+    
+    srt_entries = []
+    for i, sentence in enumerate(sentences):
+        start_time = i * time_per_sentence
+        end_time = min((i + 1) * time_per_sentence, duration)
+        
+        # Format timestamps as SRT format: HH:MM:SS,mmm
+        def format_time(seconds):
+            hours = int(seconds // 3600)
+            minutes = int((seconds % 3600) // 60)
+            secs = int(seconds % 60)
+            millis = int((seconds % 1) * 1000)
+            return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
+        
+        srt_entries.append(f"{i + 1}")
+        srt_entries.append(f"{format_time(start_time)} --> {format_time(end_time)}")
+        srt_entries.append(sentence + ("." if not sentence.endswith(".") else ""))
+        srt_entries.append("")
+    
+    with open(output_path, 'w', encoding='utf-8') as f:
+        f.write('\n'.join(srt_entries))
+    
+    return output_path
+
+
+def merge_video_audio(video_path: str, audio_path: str, output_path: str, subtitle_path: str = None):
+    """Combine video and audio using ffmpeg, optionally burning subtitles"""
     import subprocess
     import traceback
     
@@ -452,42 +488,75 @@ def merge_video_audio(video_path: str, audio_path: str, output_path: str):
         
         print(f"[INFO] Video duration: {video_duration}s, Audio duration: {audio_duration}s")
         
-        # Build ffmpeg command
-        if audio_duration >= video_duration:
-            # Audio is longer, just trim it
-            cmd = [
-                'ffmpeg', '-y',
-                '-i', video_path,
-                '-i', audio_path,
-                '-c:v', 'copy',  # Copy video stream (no re-encoding)
-                '-c:a', 'aac',
-                '-t', str(video_duration),  # Trim to video duration
-                '-shortest',
-                '-movflags', '+faststart',  # Enable streaming
-                output_path
-            ]
+        # Build base ffmpeg command
+        if subtitle_path and os.path.exists(subtitle_path):
+            # Burn subtitles into video
+            print(f"[INFO] Burning subtitles from {subtitle_path}")
+            
+            # Create subtitles filter - white text with black outline for readability
+            subtitle_filter = f"subtitles={subtitle_path}:force_style='FontName=Arial,FontSize=24,PrimaryColour=&HFFFFFF,OutlineColour=&H000000,Outline=2,Shadow=0,MarginV=50'"
+            
+            if audio_duration >= video_duration:
+                cmd = [
+                    'ffmpeg', '-y',
+                    '-i', video_path,
+                    '-i', audio_path,
+                    '-vf', subtitle_filter,
+                    '-c:v', 'libx264',  # Re-encode video with subtitles
+                    '-preset', 'fast',
+                    '-crf', '23',
+                    '-c:a', 'aac',
+                    '-t', str(video_duration),
+                    '-shortest',
+                    '-movflags', '+faststart',
+                    output_path
+                ]
+            else:
+                cmd = [
+                    'ffmpeg', '-y',
+                    '-i', video_path,
+                    '-stream_loop', '-1',
+                    '-i', audio_path,
+                    '-vf', subtitle_filter,
+                    '-c:v', 'libx264',
+                    '-preset', 'fast',
+                    '-crf', '23',
+                    '-c:a', 'aac',
+                    '-t', str(video_duration),
+                    '-shortest',
+                    '-movflags', '+faststart',
+                    output_path
+                ]
         else:
-            # Audio is shorter, loop it to match video duration
-            cmd = [
-                'ffmpeg', '-y',
-                '-i', video_path,
-                '-stream_loop', '-1',  # Loop audio infinitely
-                '-i', audio_path,
-                '-c:v', 'copy',  # Copy video stream (no re-encoding)
-                '-c:a', 'aac',
-                '-t', str(video_duration),  # Trim to video duration
-                '-shortest',
-                '-movflags', '+faststart',  # Enable streaming
-                output_path
-            ]
+            # No subtitles - just merge video and audio
+            if audio_duration >= video_duration:
+                cmd = [
+                    'ffmpeg', '-y',
+                    '-i', video_path,
+                    '-i', audio_path,
+                    '-c:v', 'copy',
+                    '-c:a', 'aac',
+                    '-t', str(video_duration),
+                    '-shortest',
+                    '-movflags', '+faststart',
+                    output_path
+                ]
+            else:
+                cmd = [
+                    'ffmpeg', '-y',
+                    '-i', video_path,
+                    '-stream_loop', '-1',
+                    '-i', audio_path,
+                    '-c:v', 'copy',
+                    '-c:a', 'aac',
+                    '-t', str(video_duration),
+                    '-shortest',
+                    '-movflags', '+faststart',
+                    output_path
+                ]
         
         print(f"[INFO] Running ffmpeg merge...")
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            check=True
-        )
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
         
         print(f"[INFO] ffmpeg merge completed successfully")
         return output_path
@@ -547,6 +616,7 @@ async def process_video_job(job_id: str, video_path: str, voice: str, num_frames
         jobs[job_id]["script"] = script
         jobs[job_id]["video_path"] = video_path
         jobs[job_id]["voice"] = voice
+        jobs[job_id]["duration"] = duration
         
         # PAUSE HERE - Wait for user to review/edit script
         update_job(job_id, Status.WAITING_FOR_APPROVAL, 50, "Script ready! Review and edit before generating voiceover.")
@@ -570,6 +640,8 @@ async def continue_voiceover_generation(job_id: str, script: str):
         # Get stored job data
         video_path = jobs[job_id].get("video_path")
         voice = jobs[job_id].get("voice", "en-US-AriaNeural")
+        add_subtitles = jobs[job_id].get("add_subtitles", False)
+        duration = jobs[job_id].get("duration", 0)
         
         if not video_path:
             raise Exception("Video path not found in job data")
@@ -591,11 +663,21 @@ async def continue_voiceover_generation(job_id: str, script: str):
         audio_size = await loop.run_in_executor(None, _verify_audio)
         print(f"[INFO] Audio file verified: {audio_size} bytes")
         
-        # Step 5: Merge video and audio (CPU-intensive, run in thread)
+        # Step 5: Generate subtitles if requested
+        subtitle_path = None
+        if add_subtitles:
+            update_job(job_id, Status.SUBTITLING, 70, "Generating subtitles...")
+            subtitle_path = str(TEMP_DIR / f"{job_id}_subtitles.srt")
+            await loop.run_in_executor(
+                None, generate_srt_subtitles, script, duration, subtitle_path
+            )
+            print(f"[INFO] Subtitles generated: {subtitle_path}")
+        
+        # Step 6: Merge video and audio (CPU-intensive, run in thread)
         update_job(job_id, Status.MERGING, 85, "Merging video and audio...")
         output_path = str(OUTPUT_DIR / f"{job_id}_final.mp4")
         await loop.run_in_executor(
-            None, merge_video_audio, video_path, audio_path, output_path
+            None, merge_video_audio, video_path, audio_path, output_path, subtitle_path
         )
         
         # Verify output file was created
@@ -616,8 +698,11 @@ async def continue_voiceover_generation(job_id: str, script: str):
                 if os.path.exists(audio_path):
                     os.remove(audio_path)
                     print(f"[INFO] Cleaned up temp audio: {audio_path}")
+                if subtitle_path and os.path.exists(subtitle_path):
+                    os.remove(subtitle_path)
+                    print(f"[INFO] Cleaned up subtitles: {subtitle_path}")
             except Exception as e:
-                print(f"[WARN] Failed to cleanup audio file: {e}")
+                print(f"[WARN] Failed to cleanup files: {e}")
         await loop.run_in_executor(None, _cleanup)
         
         # Mark complete
@@ -706,6 +791,7 @@ async def upload_video(
     file: UploadFile = File(...),
     voice: str = "en-US-AriaNeural",
     num_frames: int = 5,
+    add_subtitles: bool = False,
     user: dict = Depends(require_auth)
 ):
     """Upload a video and start processing (requires authentication)"""
@@ -737,7 +823,8 @@ async def upload_video(
         "completed_at": None,
         "output_url": None,
         "error": None,
-        "video_path": video_path
+        "video_path": video_path,
+        "add_subtitles": add_subtitles
     }
     
     # Start background processing
