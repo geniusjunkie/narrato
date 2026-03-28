@@ -539,7 +539,7 @@ FRONTEND_HTML = '''<!DOCTYPE html>
                 <h3>Your video is ready!</h3>
                 <p>AI voiceover added successfully</p>
                 <div class="btn-group">
-                    <a href="#" class="btn-success" id="downloadBtn" download>Download Video</a>
+                    <a href="#" class="btn-success" id="downloadBtn">Download Video</a>
                     <button class="btn-secondary" id="createAnotherBtn">Create Another</button>
                 </div>
             </div>
@@ -923,8 +923,52 @@ FRONTEND_HTML = '''<!DOCTYPE html>
             progressSection.classList.remove('active');
             scriptSection.classList.remove('active');
             resultSection.classList.add('active');
-            downloadBtn.href = `${API_URL}/download/${jobId}?token=${authToken}`;
+            
+            // Store job ID for download
+            downloadBtn.dataset.jobId = jobId;
         }
+        
+        // Handle download with auth header
+        downloadBtn.addEventListener('click', async (e) => {
+            e.preventDefault();
+            const jobId = downloadBtn.dataset.jobId;
+            if (!jobId) return;
+            
+            downloadBtn.textContent = 'Downloading...';
+            downloadBtn.disabled = true;
+            
+            try {
+                const response = await fetch(`${API_URL}/download/${jobId}`, {
+                    headers: { 'Authorization': `Bearer ${authToken}` }
+                });
+                
+                if (!response.ok) {
+                    if (response.status === 401) {
+                        logout();
+                        showError('Session expired. Please sign in again.');
+                        return;
+                    }
+                    throw new Error('Download failed');
+                }
+                
+                // Get the blob and create download link
+                const blob = await response.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `narrato_${jobId}.mp4`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                window.URL.revokeObjectURL(url);
+                
+            } catch (error) {
+                showError('Download failed: ' + error.message);
+            } finally {
+                downloadBtn.textContent = 'Download Video';
+                downloadBtn.disabled = false;
+            }
+        });
         
         function showError(message) { 
             errorMessage.textContent = message; 
